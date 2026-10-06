@@ -1,0 +1,50 @@
+# =====================================================================
+# installer-assistant  –  .gitattributes
+# Put this file in the ROOT of the repository and commit it in the
+# first commit. This project does NOT use Git LFS.
+# =====================================================================
+
+# Normalise line endings for text files
+* text=auto
+
+# ---- Binary files: never diff or merge these as text -------------------
+# Git keeps a full copy of every version of these files forever,
+# so keep them few and small (datasets, videos and builds go on the shared drive).
+
+# Images
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.tga  binary
+*.tif  binary
+*.tiff binary
+*.psd  binary
+*.exr  binary
+*.hdr  binary
+
+# 3D models
+*.fbx   binary
+*.obj   binary
+*.blend binary
+
+# Audio and video
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.mp4 binary
+*.mov binary
+
+# Fonts
+*.ttf binary
+*.otf binary
+
+# AI models
+*.onnx   binary
+*.sentis binary
+
+# Plugins and archives
+*.dll binary
+*.so  binary
+*.aar binary
+*.jar binary
+*.zip binary
