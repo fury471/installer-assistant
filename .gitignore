@@ -76,3 +76,6 @@ ml/runs/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Keep the secrets template (empty values) in Git
+!**/secrets.example.json
