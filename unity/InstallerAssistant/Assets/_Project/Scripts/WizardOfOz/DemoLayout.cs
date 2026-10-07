@@ -35,7 +35,7 @@ namespace InstallerAssistant.WizardOfOz
             new Vector2(0.4000f, 0.420f), new Vector2(0.4667f, 0.420f),
             new Vector2(0.5333f, 0.420f), new Vector2(0.6000f, 0.420f)
         };
-        [Range(1f, 3f)] public float readerZoom = 1f;
+        [Range(0.5f, 3f)] public float readerZoom = 1f;
         [Tooltip("Moves the photo; in fractions of the photo size.")]
         public Vector2 readerPan = Vector2.zero;
 
@@ -46,8 +46,34 @@ namespace InstallerAssistant.WizardOfOz
             new Vector2(0.4167f, 0.451f), new Vector2(0.4722f, 0.451f),
             new Vector2(0.5278f, 0.451f), new Vector2(0.5833f, 0.451f)
         };
-        [Range(1f, 3f)] public float controllerZoom = 1f;
+        [Range(0.5f, 3f)] public float controllerZoom = 1f;
         public Vector2 controllerPan = Vector2.zero;
+
+        [Header("Optional photo-specific placement (disabled = use controller defaults)")]
+        public ControllerPhotoPlacement controllerNoLabelPlacement = new ControllerPhotoPlacement();
+        public ControllerPhotoPlacement controllerFixedPlacement = new ControllerPhotoPlacement();
+        [Tooltip("Use cable-label wording for photographed handwritten labels instead of QR labels.")]
+        public bool handwrittenLabels;
+        [Tooltip("Label frame size as a fraction of the photo. Zero keeps the original square frame.")]
+        public Vector2 readerLabelSize;
+        public Vector2 controllerLabelSize;
+        [Range(0.5f, 1f)] public float markerScale = 1f;
+        [Range(0.5f, 1f)] public float labelTextScale = 1f;
+        public bool snapshotOnLeft;
+        public float snapshotInset = 40f;
+        public float snapshotTopInset = 250f;
+        public bool readerTagsBelowTerminals;
+
+        [System.Serializable]
+        public class ControllerPhotoPlacement
+        {
+            public bool enabled;
+            public Vector2[] terminalPos = new Vector2[4];
+            public Vector2 labelPos;
+            public Vector2 labelSize;
+            [Range(0.5f, 3f)] public float zoom = 1f;
+            public Vector2 pan;
+        }
 
         [Header("Wire colours: 0 Red, 1 Black, 2 Green, 3 Yellow, 4 White, 5 Brown, 6 Blue, 7 Orange")]
         [Tooltip("Colour on the reader terminals, in the order +, -, A, B.")]

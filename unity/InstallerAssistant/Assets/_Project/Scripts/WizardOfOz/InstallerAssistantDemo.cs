@@ -91,6 +91,12 @@ namespace InstallerAssistant.WizardOfOz
         readonly List<Term> terms = new List<Term>();
         int[] recorded;               // confirmed colours at the reader end
         bool atController;
+        DemoLayout.ControllerPhotoPlacement controllerPlacement;
+        Vector2[] ControllerPositions => controllerPlacement != null ? controllerPlacement.terminalPos : L.controllerTerminalPos;
+        Vector2 ControllerLabelPosition => controllerPlacement != null ? controllerPlacement.labelPos : L.controllerLabelPos;
+        Vector2 LabelFrameSize => !atController ? L.readerLabelSize
+            : controllerPlacement != null ? controllerPlacement.labelSize : L.controllerLabelSize;
+        string LabelDescription => L.handwrittenLabels ? "handwritten cable label" : "QR label";
         float startTime;
         int issuesFixed, checkedByYou;
         string clicked;               // last button id clicked
@@ -198,8 +204,8 @@ namespace InstallerAssistant.WizardOfOz
             if (mover != null)
             {
                 bool still = calibrating;
-                float zoom = atController ? L.controllerZoom : L.readerZoom;
-                Vector2 pan = atController ? L.controllerPan : L.readerPan;
+                float zoom = atController ? (controllerPlacement != null ? controllerPlacement.zoom : L.controllerZoom) : L.readerZoom;
+                Vector2 pan = atController ? (controllerPlacement != null ? controllerPlacement.pan : L.controllerPan) : L.readerPan;
                 float s = zoom * (still ? 1f : 1.025f);
                 Vector2 size = photoRT != null ? photoRT.rect.size : Vector2.zero;
                 Vector2 sway = still ? Vector2.zero
@@ -221,12 +227,15 @@ namespace InstallerAssistant.WizardOfOz
 
             if (qrBox != null && qrBox.gameObject.activeSelf)
             {
+                Vector2 frame = LabelFrameSize;
+                qrBox.sizeDelta = frame.x > 0 && frame.y > 0
+                    ? Vector2.Scale(frame, photoRT.rect.size) * Scale() : new Vector2(300, 300);
                 float p = 1f + 0.03f * Mathf.Sin(t * 5f);
                 qrBox.localScale = new Vector3(p / Scale(), p / Scale(), 1f);
             }
             if (missingGuide != null && missingGuide.gameObject.activeSelf)
             {
-                missingGuide.localScale = Vector3.one / Scale();
+                missingGuide.localScale = Vector3.one * (L.markerScale / Scale());
                 missingGuide.GetComponent<CanvasGroup>().alpha = 0.65f + 0.35f * Mathf.Sin(t * 4f);
             }
             foreach (var ring in pulseRings)
@@ -431,7 +440,7 @@ namespace InstallerAssistant.WizardOfOz
                 if (controllerNoLabelTex != null) SetPhoto(controllerNoLabelTex);
                 Instruction("Point the camera at the same cable label", Accent);
                 Sheet("Find the cable label", "The label links this end to the record from the reader end.");
-                ProgressLine("Looking for the QR label", true);
+                ProgressLine("Looking for the " + LabelDescription, true);
                 yield return Scan(1.8f);
                 Instruction("No label found on this cable", Warn);
                 ShowMissingGuide(true);
@@ -443,7 +452,7 @@ namespace InstallerAssistant.WizardOfOz
                 SetPhoto(controllerTex);
             }
 
-            yield return FindLabel(L.controllerLabelPos, true);
+            yield return FindLabel(ControllerLabelPosition, true);
             Toast("Record loaded · reader end, 4 wires");
 
             // rules + AI second opinion
@@ -559,7 +568,7 @@ namespace InstallerAssistant.WizardOfOz
             thumbs.GetComponent<HorizontalLayoutGroup>().childForceExpandHeight = true;
             Thumb(thumbs, readerTex, CropRect(L.readerTerminalPos, readerTex), "Reader end");
             Thumb(thumbs, controllerFixedTex != null ? controllerFixedTex : controllerTex,
-                CropRect(L.controllerTerminalPos, controllerTex), "Controller end");
+                CropRect(ControllerPositions, controllerFixedTex != null ? controllerFixedTex : controllerTex), "Controller end");
             Space(col, 24);
             Txt(col, "Checked in " + Mathf.FloorToInt(secs / 60f) + ":" + Mathf.FloorToInt(secs % 60f).ToString("00"),
                 30, Faint, FontStyles.Normal, TextAlignmentOptions.Center);
@@ -585,8 +594,9 @@ namespace InstallerAssistant.WizardOfOz
             Instruction("Point the camera at the cable label", Accent);
             Sheet("Find the cable label", controller
                 ? "The label links this end to the record from the reader end."
+                : L.handwrittenLabels ? "The handwritten label links this cable to its demo record."
                 : "The QR label tells the app which cable this is and how to check it.");
-            ProgressLine("Looking for the QR label", true);
+            ProgressLine("Looking for the " + LabelDescription, true);
             yield return Scan(controller ? 1.1f : 1.8f);
             ShowQr(pos);
             yield return Wait(0.25f);
@@ -808,9 +818,10 @@ namespace InstallerAssistant.WizardOfOz
             // QR detection box and missing-label guide
             qrBox = Rect("QRBox", markers);
             qrBox.sizeDelta = new Vector2(300, 300);
-            Corners(qrBox, 300, 300, Ok, 70, 8);
+            Corners(qrBox, 300, 300, Ok, 70 * L.markerScale, 8 * L.markerScale);
             var qrLbl = Pill(qrBox, "QRLabel", new Vector2(0.5f, 1), new Vector2(0, 50), new Vector2(0.5f, 0.5f));
-            Txt(qrLbl, "QR · " + L.cableLabel, 28, Ink, FontStyles.Bold, TextAlignmentOptions.Left);
+            qrLbl.localScale = Vector3.one * L.labelTextScale;
+            Txt(qrLbl, (L.handwrittenLabels ? "Label · " : "QR · ") + L.cableLabel, 28, Ink, FontStyles.Bold, TextAlignmentOptions.Left);
             qrBox.gameObject.SetActive(false);
 
             missingGuide = Rect("MissingLabel", markers);
@@ -818,7 +829,8 @@ namespace InstallerAssistant.WizardOfOz
             missingGuide.gameObject.AddComponent<CanvasGroup>();
             Dashed(missingGuide, 330, 300, Warn);
             var mg = Pill(missingGuide, "MissingText", new Vector2(0.5f, 0), new Vector2(0, -60), new Vector2(0.5f, 0.5f));
-            Txt(mg, "Attach label " + L.cableLabel + " here", 30, Ink, FontStyles.Bold, TextAlignmentOptions.Left);
+            mg.localScale = Vector3.one * (L.labelTextScale / L.markerScale);
+            Txt(mg, L.handwrittenLabels ? "Attach cable label here" : "Attach label " + L.cableLabel + " here", 30, Ink, FontStyles.Bold, TextAlignmentOptions.Left);
             missingGuide.gameObject.SetActive(false);
 
             // bottom sheet
@@ -972,7 +984,7 @@ namespace InstallerAssistant.WizardOfOz
         {
             foreach (var t in terms) if (t.root != null) Destroy(t.root.gameObject);
             terms.Clear();
-            Vector2[] pos = controller ? L.controllerTerminalPos : L.readerTerminalPos;
+            Vector2[] pos = controller ? ControllerPositions : L.readerTerminalPos;
             string[] names = controller ? ControllerNames : ReaderNames;
             for (int i = 0; i < 4; i++)
             {
@@ -993,7 +1005,9 @@ namespace InstallerAssistant.WizardOfOz
             t.leader = Img("Leader", t.root, null, Hex("#FFFFFF", 0.7f), 0).rectTransform;
             t.leader.pivot = new Vector2(0.5f, 0.5f);
 
-            t.vis = Rect("Vis", t.root);
+            var markerSize = Rect("MarkerSize", t.root);
+            markerSize.localScale = Vector3.one * L.markerScale;
+            t.vis = Rect("Vis", markerSize);
             t.pulse = Img("Pulse", t.vis, sRing, Ok, 0).rectTransform;
             t.pulse.sizeDelta = new Vector2(96, 96);
             var halo = Img("Halo", t.vis, sCircle, Hex("#000000", 0.45f), 0);
@@ -1011,6 +1025,7 @@ namespace InstallerAssistant.WizardOfOz
             MakeButton(hit, () => { if (!modalOpen && !calibrating) tapped = term; });
 
             t.tag = Rect("Tag", t.root);
+            t.tag.localScale = Vector3.one * L.labelTextScale;
             t.tag.sizeDelta = new Vector2(TagW, 70);
             t.tagBg = Img("Bg", t.tag, sRound, Glass, 35);
             Stretch(t.tagBg.rectTransform);
@@ -1096,33 +1111,35 @@ namespace InstallerAssistant.WizardOfOz
                 {
                     int i = bySlot[k];
                     colY[i] = pts[i].y;
-                    if (k > 0) colY[i] = Mathf.Min(colY[i], colY[bySlot[k - 1]] - 82f);
+                    if (k > 0) colY[i] = Mathf.Min(colY[i], colY[bySlot[k - 1]] - 82f * L.labelTextScale);
                     before += pts[i].y; after += colY[i];
                 }
                 float shift = (before - after) / terms.Count;
                 for (int i = 0; i < terms.Count; i++) colY[i] += shift;
             }
-            const float pitch = TagPitch;
+            float pitch = TagPitch * L.labelTextScale;
+            bool tagsBelow = !atController && L.readerTagsBelowTerminals;
             for (int i = 0; i < terms.Count; i++)
             {
                 var t = terms[i];
                 Vector2 target;
                 if (row)
                 {
-                    float span = pitch * (terms.Count - 1) + TagW;
+                    float span = pitch * (terms.Count - 1) + TagW * L.labelTextScale;
                     float c = Mathf.Clamp(meanX, -halfW + span * 0.5f + 20f, halfW - span * 0.5f - 20f);
-                    target = new Vector2(c + (slot[i] - (terms.Count - 1) * 0.5f) * pitch, maxY + 170f);
+                    float y = tagsBelow ? minY - 170f * L.markerScale : maxY + 170f * L.markerScale;
+                    target = new Vector2(c + (slot[i] - (terms.Count - 1) * 0.5f) * pitch, y);
                 }
                 else
                 {
                     bool right = meanX < 0;
-                    float x = right ? maxX + 210f : minX - 210f;
+                    float x = right ? maxX + 210f * L.labelTextScale : minX - 210f * L.labelTextScale;
                     target = new Vector2(x, colY[i]);
                 }
                 Vector2 off = target - pts[i];
                 t.tag.anchoredPosition = off;
-                Vector2 from = off.normalized * 40f;
-                Vector2 to = off - (row ? new Vector2(0, 35f) : new Vector2(Mathf.Sign(off.x) * TagW * 0.5f, 0f));
+                Vector2 from = off.normalized * 40f * L.markerScale;
+                Vector2 to = off - (row ? new Vector2(0, tagsBelow ? -35f : 35f) : new Vector2(Mathf.Sign(off.x) * TagW * 0.5f, 0f)) * L.labelTextScale;
                 Vector2 d = to - from;
                 t.leader.anchoredPosition = (from + to) * 0.5f;
                 t.leader.sizeDelta = new Vector2(d.magnitude, 3f);
@@ -1136,6 +1153,19 @@ namespace InstallerAssistant.WizardOfOz
         {
             photo.texture = tex;
             photoFit.aspectRatio = tex.width / (float)tex.height;
+            controllerPlacement = null;
+            if (atController)
+            {
+                var candidate = tex == controllerNoLabelTex ? L.controllerNoLabelPlacement
+                    : tex == controllerFixedTex ? L.controllerFixedPlacement : null;
+                if (candidate != null && candidate.enabled) controllerPlacement = candidate;
+                // Preserve each terminal's identity and state while moving it to the new photograph.
+                foreach (var t in terms)
+                {
+                    t.pos = Get(ControllerPositions, t.index, t.pos);
+                    t.root.anchorMin = t.root.anchorMax = new Vector2(t.pos.x, 1f - t.pos.y);
+                }
+            }
         }
 
         void Instruction(string text, Color dot)
@@ -1159,12 +1189,19 @@ namespace InstallerAssistant.WizardOfOz
         {
             qrBox.anchorMin = qrBox.anchorMax = new Vector2(pos.x, 1f - pos.y);
             qrBox.anchoredPosition = Vector2.zero;
+            if (L.handwrittenLabels)
+            {
+                var caption = (RectTransform)qrBox.Find("QRLabel");
+                float edge = pos.x > 0.5f ? 1f : 0f;
+                caption.anchorMin = caption.anchorMax = new Vector2(edge, 1);
+                caption.pivot = new Vector2(edge, 0.5f);
+            }
             qrBox.gameObject.SetActive(true);
         }
 
         void ShowMissingGuide(bool on)
         {
-            Vector2 pos = L.controllerLabelPos;
+            Vector2 pos = ControllerLabelPosition;
             missingGuide.anchorMin = missingGuide.anchorMax = new Vector2(pos.x, 1f - pos.y);
             missingGuide.anchoredPosition = Vector2.zero;
             missingGuide.gameObject.SetActive(on);
@@ -1258,9 +1295,9 @@ namespace InstallerAssistant.WizardOfOz
             snapshotDots.Clear();
             snapshotUv = CropRect(L.readerTerminalPos, readerTex);
             snapshot = Rect("Snapshot", safe);
-            snapshot.anchorMin = snapshot.anchorMax = new Vector2(1, 1);
-            snapshot.pivot = new Vector2(1, 1);
-            snapshot.anchoredPosition = new Vector2(-40, -250);
+            snapshot.anchorMin = snapshot.anchorMax = new Vector2(L.snapshotOnLeft ? 0 : 1, 1);
+            snapshot.pivot = snapshot.anchorMax;
+            snapshot.anchoredPosition = new Vector2(L.snapshotOnLeft ? L.snapshotInset : -L.snapshotInset, -L.snapshotTopInset);
             snapshot.sizeDelta = new Vector2(380, 330);
             snapshotGroup = snapshot.gameObject.AddComponent<CanvasGroup>();
             var shadow = Img("Shadow", snapshot, sSoft, Hex("#000000", 0.6f), 0);
@@ -1326,8 +1363,9 @@ namespace InstallerAssistant.WizardOfOz
         void ToggleSnapshot()
         {
             snapshotExpanded = !snapshotExpanded;
+            float inset = snapshotExpanded ? 40f : L.snapshotInset;
             StartCoroutine(ResizeSnapshot(snapshotExpanded ? new Vector2(1000, 840) : new Vector2(380, 330),
-                snapshotExpanded ? new Vector2(-40, -150) : new Vector2(-40, -250)));
+                new Vector2(L.snapshotOnLeft ? inset : -inset, snapshotExpanded ? -150 : -L.snapshotTopInset)));
         }
 
         IEnumerator ResizeSnapshot(Vector2 size, Vector2 pos)
@@ -1531,19 +1569,23 @@ namespace InstallerAssistant.WizardOfOz
             var p = new Vector2(Mathf.Clamp01((local.x - r.xMin) / r.width), Mathf.Clamp01(1f - (local.y - r.yMin) / r.height));
             if (calibStep == 0)
             {
-                if (atController) L.controllerLabelPos = p; else L.readerLabelPos = p;
+                if (!atController) L.readerLabelPos = p;
+                else if (controllerPlacement != null) controllerPlacement.labelPos = p;
+                else L.controllerLabelPos = p;
                 ShowQr(p);
             }
             else
             {
                 int i = calibStep - 1;
-                Vector2[] arr = atController ? L.controllerTerminalPos : L.readerTerminalPos;
+                Vector2[] arr = atController ? ControllerPositions : L.readerTerminalPos;
                 if (arr == null || arr.Length < 4)
                 {
                     var n = new Vector2[4];
                     if (arr != null) Array.Copy(arr, n, arr.Length);
                     arr = n;
-                    if (atController) L.controllerTerminalPos = arr; else L.readerTerminalPos = arr;
+                    if (!atController) L.readerTerminalPos = arr;
+                    else if (controllerPlacement != null) controllerPlacement.terminalPos = arr;
+                    else L.controllerTerminalPos = arr;
                 }
                 arr[i] = p;
                 terms[i].pos = p;
