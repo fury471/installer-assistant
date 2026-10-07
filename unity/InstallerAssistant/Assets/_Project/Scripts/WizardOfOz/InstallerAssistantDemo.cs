@@ -43,8 +43,11 @@ namespace InstallerAssistant.WizardOfOz
             Hex("#E53935"), Hex("#1E1F22"), Hex("#2E9E4F"), Hex("#F2C230"),
             Hex("#F1F1EE"), Hex("#7B4B2A"), Hex("#2F6FDB"), Hex("#F08A24")
         };
-        static readonly string[] ReaderNames = { "+V", "0V", "A", "B" };
-        static readonly string[] ControllerNames = { "12V", "GND", "A", "B" };
+        static readonly string[] DefaultReaderNames = { "+", "-", "A", "B" };
+        static readonly string[] DefaultControllerNames = { "+12V", "-", "A", "B" };
+        string[] ReaderNames { get { return Names(L != null ? L.readerTerminalNames : null, DefaultReaderNames); } }
+        string[] ControllerNames { get { return Names(L != null ? L.controllerTerminalNames : null, DefaultControllerNames); } }
+        static string[] Names(string[] arr, string[] fallback) { return arr != null && arr.Length >= 4 ? arr : fallback; }
 
         static readonly Color Ink = Hex("#F3F6F8");
         static readonly Color Muted = Hex("#A3ADB7");
@@ -83,7 +86,7 @@ namespace InstallerAssistant.WizardOfOz
         // ------------------------------------------------------------------ state
 
         DemoLayout L;
-        Texture2D readerTex, controllerTex, controllerFixedTex;
+        Texture2D readerTex, controllerTex, controllerFixedTex, controllerNoLabelTex;
         readonly List<Term> terms = new List<Term>();
         int[] recorded;               // confirmed colours at the reader end
         bool atController;
@@ -164,6 +167,11 @@ namespace InstallerAssistant.WizardOfOz
             }
             if (readerTex == null) readerTex = L.readerPhoto != null ? L.readerPhoto : MockPhotos.Reader(rc);
             if (controllerTex == null) controllerTex = L.controllerPhoto != null ? L.controllerPhoto : MockPhotos.Controller(cc);
+            if (controllerNoLabelTex == null)
+            {
+                if (L.controllerNoLabelPhoto != null) controllerNoLabelTex = L.controllerNoLabelPhoto;
+                else if (L.controllerPhoto == null) controllerNoLabelTex = MockPhotos.Controller(cc, false);
+            }
             if (controllerFixedTex == null)
             {
                 if (L.controllerFixedPhoto != null) controllerFixedTex = L.controllerFixedPhoto;
@@ -419,6 +427,7 @@ namespace InstallerAssistant.WizardOfOz
 
             if (L.startWithMissingLabel)
             {
+                if (controllerNoLabelTex != null) SetPhoto(controllerNoLabelTex);
                 Instruction("Point the camera at the same cable label", Accent);
                 Sheet("Find the cable label", "The label links this end to the record from the reader end.");
                 ProgressLine("Looking for the QR label", true);
@@ -430,6 +439,7 @@ namespace InstallerAssistant.WizardOfOz
                 Btn(sheetButtons, "Label attached · scan again", true, "labelled");
                 yield return WaitClick();
                 ShowMissingGuide(false);
+                SetPhoto(controllerTex);
             }
 
             yield return FindLabel(L.controllerLabelPos, true);
@@ -1062,6 +1072,35 @@ namespace InstallerAssistant.WizardOfOz
             }
             float halfW = canvasRT.rect.width * 0.5f;
             bool row = (maxX - minX) >= (maxY - minY);
+            // slot = rank along the terminal row (left to right) or column (top to bottom),
+            // so leader lines never cross whatever order the terminals have on the board
+            var slot = new int[terms.Count];
+            for (int i = 0; i < terms.Count; i++)
+                for (int j = 0; j < terms.Count; j++)
+                {
+                    if (i == j) continue;
+                    bool before = row ? (pts[j].x < pts[i].x || (pts[j].x == pts[i].x && j < i))
+                                      : (pts[j].y > pts[i].y || (pts[j].y == pts[i].y && j < i));
+                    if (before) slot[i]++;
+                }
+
+            // column mode: each tag level with its own terminal, pushed apart only if they would overlap
+            var colY = new float[terms.Count];
+            if (!row)
+            {
+                var bySlot = new int[terms.Count];
+                for (int i = 0; i < terms.Count; i++) bySlot[slot[i]] = i;
+                float before = 0, after = 0;
+                for (int k = 0; k < terms.Count; k++)
+                {
+                    int i = bySlot[k];
+                    colY[i] = pts[i].y;
+                    if (k > 0) colY[i] = Mathf.Min(colY[i], colY[bySlot[k - 1]] - 82f);
+                    before += pts[i].y; after += colY[i];
+                }
+                float shift = (before - after) / terms.Count;
+                for (int i = 0; i < terms.Count; i++) colY[i] += shift;
+            }
             const float pitch = TagPitch;
             for (int i = 0; i < terms.Count; i++)
             {
@@ -1071,19 +1110,18 @@ namespace InstallerAssistant.WizardOfOz
                 {
                     float span = pitch * (terms.Count - 1) + TagW;
                     float c = Mathf.Clamp(meanX, -halfW + span * 0.5f + 20f, halfW - span * 0.5f - 20f);
-                    target = new Vector2(c + (i - (terms.Count - 1) * 0.5f) * pitch, maxY + 170f);
+                    target = new Vector2(c + (slot[i] - (terms.Count - 1) * 0.5f) * pitch, maxY + 170f);
                 }
                 else
                 {
                     bool right = meanX < 0;
-                    float x = right ? maxX + 200f : minX - 200f;
-                    float y = Mathf.Lerp(maxY + 60f, minY - 60f, terms.Count > 1 ? i / (terms.Count - 1f) : 0.5f);
-                    target = new Vector2(x, y);
+                    float x = right ? maxX + 210f : minX - 210f;
+                    target = new Vector2(x, colY[i]);
                 }
                 Vector2 off = target - pts[i];
                 t.tag.anchoredPosition = off;
                 Vector2 from = off.normalized * 40f;
-                Vector2 to = off - new Vector2(0, row ? 35f : 0f);
+                Vector2 to = off - (row ? new Vector2(0, 35f) : new Vector2(Mathf.Sign(off.x) * TagW * 0.5f, 0f));
                 Vector2 d = to - from;
                 t.leader.anchoredPosition = (from + to) * 0.5f;
                 t.leader.sizeDelta = new Vector2(d.magnitude, 3f);

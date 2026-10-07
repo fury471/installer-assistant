@@ -15,12 +15,18 @@ namespace InstallerAssistant.WizardOfOz
         [Header("Photos (empty = built-in mock images)")]
         public Texture2D readerPhoto;
         public Texture2D controllerPhoto;
+        [Tooltip("Optional. Controller photo without the cable label; shown during the 'label missing' step.")]
+        public Texture2D controllerNoLabelPhoto;
         [Tooltip("Optional. Controller photo after the wiring has been fixed; shown after 'Fix & rescan'.")]
         public Texture2D controllerFixedPhoto;
 
         [Header("Job")]
         public string doorName = "Door 1";
         public string cableLabel = "D1 · READER · C01";
+
+        [Header("Terminal names as printed on the boards, in the order: power +, power -, A, B")]
+        public string[] readerTerminalNames = { "+", "-", "A", "B" };
+        public string[] controllerTerminalNames = { "+12V", "-", "A", "B" };
 
         [Header("Reader end: positions on the photo (press K in Play mode to click them)")]
         public Vector2 readerLabelPos = new Vector2(0.5f, 0.701f);
@@ -44,10 +50,40 @@ namespace InstallerAssistant.WizardOfOz
         public Vector2 controllerPan = Vector2.zero;
 
         [Header("Wire colours: 0 Red, 1 Black, 2 Green, 3 Yellow, 4 White, 5 Brown, 6 Blue, 7 Orange")]
-        [Tooltip("Colour on reader terminals +V, 0V, A, B.")]
+        [Tooltip("Colour on the reader terminals, in the order +, -, A, B.")]
         public int[] readerColours = { 0, 1, 2, 3 };
-        [Tooltip("Colour found on controller terminals 12V, GND, A, B before the fix (the planted error).")]
+        [Tooltip("Colour found on the controller terminals +12V, -, A, B before the fix (the planted error).")]
         public int[] controllerFoundColours = { 0, 1, 3, 2 };
+
+        /// <summary>
+        /// Fills in the positions for the bench photos made from the team's reader and A1610 photos
+        /// (reader.jpg, controller_*.jpg). Use it from the asset's ⋮ menu in the Inspector.
+        /// </summary>
+        [ContextMenu("Use bench photo positions")]
+        void UseBenchPhotoPositions()
+        {
+            readerTerminalNames = new[] { "+", "-", "A", "B" };
+            controllerTerminalNames = new[] { "+12V", "-", "A", "B" };
+            readerLabelPos = new Vector2(0.500f, 0.675f);
+            readerTerminalPos = new[]
+            {
+                new Vector2(0.430f, 0.400f), new Vector2(0.283f, 0.400f),   // +, -
+                new Vector2(0.572f, 0.400f), new Vector2(0.717f, 0.400f)    // A, B
+            };
+            controllerLabelPos = new Vector2(0.306f, 0.670f);
+            controllerTerminalPos = new[]
+            {
+                new Vector2(0.354f, 0.505f), new Vector2(0.354f, 0.547f),   // +12V, -
+                new Vector2(0.354f, 0.460f), new Vector2(0.354f, 0.418f)    // A, B
+            };
+            readerZoom = controllerZoom = 1f;
+            readerPan = controllerPan = Vector2.zero;
+            readerColours = new[] { 0, 1, 2, 3 };
+            controllerFoundColours = new[] { 0, 1, 3, 2 };
+#if UNITY_EDITOR
+            UnityEditor.EditorUtility.SetDirty(this);
+#endif
+        }
 
         [Header("Scripted results")]
         [Tooltip("Reader terminal (0-3) the AI is unsure about; the installer checks it.")]
