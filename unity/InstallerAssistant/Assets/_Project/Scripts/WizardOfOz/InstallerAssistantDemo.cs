@@ -45,6 +45,7 @@ namespace InstallerAssistant.WizardOfOz
         };
         static readonly string[] DefaultReaderNames = { "+", "-", "A", "B" };
         static readonly string[] DefaultControllerNames = { "+12V", "-", "A", "B" };
+        static readonly int[] ResultRowOrder = { 1, 0, 2, 3 }; // Display power -, power +, A, B; keep data indices unchanged.
         string[] ReaderNames { get { return Names(L != null ? L.readerTerminalNames : null, DefaultReaderNames); } }
         string[] ControllerNames { get { return Names(L != null ? L.controllerTerminalNames : null, DefaultControllerNames); } }
         static string[] Names(string[] arr, string[] fallback) { return arr != null && arr.Length >= 4 ? arr : fallback; }
@@ -350,7 +351,7 @@ namespace InstallerAssistant.WizardOfOz
             Sheet("Check the reading", unsure > 0
                 ? "4 wires read · " + unsure + " needs your check. Tap a terminal to edit it."
                 : "4 wires read. Confirm to save this end, or tap a terminal to edit it.");
-            foreach (var t in terms) Row(t);
+            foreach (int i in ResultRowOrder) Row(terms[i]);
             Btn(sheetButtons, "Rescan", false, "rescan");
             Btn(sheetButtons, "Confirm", true, "confirm");
         }
@@ -499,7 +500,7 @@ namespace InstallerAssistant.WizardOfOz
             }
             Instruction("All terminals match the reader end", Ok);
             Sheet("All 4 terminals correct", "Rules and AI second opinion agree on every terminal.");
-            foreach (var t in terms) Row(t);
+            foreach (int i in ResultRowOrder) Row(terms[i]);
             Btn(sheetButtons, "Finish", true, "finish");
             yield return WaitClick();
         }
@@ -514,7 +515,7 @@ namespace InstallerAssistant.WizardOfOz
             if (check > 0) parts.Add(check + " to check");
             if (ok > 0) parts.Add(ok + " OK");
             Sheet(string.Join("  ·  ", parts.ToArray()), "Tap a terminal for details and the fix.");
-            foreach (var t in terms) Row(t);
+            foreach (int i in ResultRowOrder) Row(terms[i]);
             Btn(sheetButtons, "Fix & rescan", true, "fix");
             Instruction(wrong > 0 ? "Wiring does not match the reader end" : "Please check the amber terminal",
                 wrong > 0 ? Bad : Warn);
