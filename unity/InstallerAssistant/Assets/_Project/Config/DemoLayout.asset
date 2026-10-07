@@ -1,0 +1,51 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: dc3842684990d5b4c950df6c60022d96, type: 3}
+  m_Name: DemoLayout
+  m_EditorClassIdentifier: Assembly-CSharp::InstallerAssistant.WizardOfOz.DemoLayout
+  readerPhoto: {fileID: 2800000, guid: 701bada7dd85cf14a9db317328bce741, type: 3}
+  controllerPhoto: {fileID: 2800000, guid: 2f58763cad09c7f479be69fa380c799e, type: 3}
+  controllerNoLabelPhoto: {fileID: 2800000, guid: 1fcdbbdbe7e49d64b9aecc2ba5cd44b3, type: 3}
+  controllerFixedPhoto: {fileID: 2800000, guid: ea3bd2059e7c04c4f94ae18ff2a9a1db, type: 3}
+  doorName: Door 1
+  cableLabel: "D1 \xB7 READER \xB7 C01"
+  readerTerminalNames:
+  - +
+  - '-'
+  - A
+  - B
+  controllerTerminalNames:
+  - +12V
+  - '-'
+  - A
+  - B
+  readerLabelPos: {x: 0.5, y: 0.675}
+  readerTerminalPos:
+  - {x: 0.43, y: 0.4}
+  - {x: 0.283, y: 0.4}
+  - {x: 0.572, y: 0.4}
+  - {x: 0.717, y: 0.4}
+  readerZoom: 1
+  readerPan: {x: 0, y: 0}
+  controllerLabelPos: {x: 0.306, y: 0.67}
+  controllerTerminalPos:
+  - {x: 0.354, y: 0.505}
+  - {x: 0.354, y: 0.547}
+  - {x: 0.354, y: 0.46}
+  - {x: 0.354, y: 0.418}
+  controllerZoom: 1
+  controllerPan: {x: 0, y: 0}
+  readerColours: 00000000010000000200000003000000
+  controllerFoundColours: 00000000010000000300000002000000
+  uncertainReaderTerminal: 3
+  aiDisagreesOnControllerTerminal: 1
+  startWithMissingLabel: 1

@@ -46,7 +46,7 @@ namespace InstallerAssistant.WizardOfOz
             return p.ToTexture("Mock reader end");
         }
 
-        public static Texture2D Controller(Color[] wireColours)
+        public static Texture2D Controller(Color[] wireColours, bool withLabel = true)
         {
             var p = new Painter(W, H, 23);
             p.Gradient(new Color(0.88f, 0.89f, 0.90f), new Color(0.72f, 0.74f, 0.76f), 5f);
@@ -82,7 +82,7 @@ namespace InstallerAssistant.WizardOfOz
             for (int k = 0; k < 8; k++) p.Screw(330 + 60 * k, 520);
             for (int k = 0; k < 8; k++) p.RoundRect(318 + 60 * k, 418, 342 + 60 * k, 428, 3, new Color(0.85f, 0.87f, 0.86f));
 
-            p.Label(540, 1000, 101);
+            if (withLabel) p.Label(540, 1000, 101);
             p.Vignette(0.35f);
             return p.ToTexture("Mock controller end");
         }

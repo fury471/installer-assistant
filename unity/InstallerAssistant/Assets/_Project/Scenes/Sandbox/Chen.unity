@@ -148,7 +148,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ca6dcfbcd261bca4ca932cbb1ce5957b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::InstallerAssistant.WizardOfOz.InstallerAssistantDemo
-  layout: {fileID: 0}
+  layout: {fileID: 11400000, guid: f362fc356920b7e4d9036ff89e208ef8, type: 2}
   speed: 1
   showOperatorHint: 1
 --- !u!4 &498911188
