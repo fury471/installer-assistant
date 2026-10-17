@@ -79,3 +79,8 @@ desktop.ini
 
 # Keep the secrets template (empty values) in Git
 !**/secrets.example.json
+
+# ---- Domain tests (tools/domain-tests): keep the project file, ignore build output ----
+!tools/**/*.csproj
+tools/**/bin/
+tools/**/obj/
