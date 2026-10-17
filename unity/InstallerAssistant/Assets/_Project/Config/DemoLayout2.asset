@@ -12,68 +12,98 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: dc3842684990d5b4c950df6c60022d96, type: 3}
   m_Name: DemoLayout2
   m_EditorClassIdentifier: Assembly-CSharp::InstallerAssistant.WizardOfOz.DemoLayout
-  readerPhoto: {fileID: 2800000, guid: d20d58ba597a4f04864a7f4fe51e8cef, type: 3}
-  controllerPhoto: {fileID: 2800000, guid: cca66540d5414d988adc8de9a2a976ae, type: 3}
-  controllerNoLabelPhoto: {fileID: 2800000, guid: 79c93e20302c463fbdbb5a2be6b21c7e, type: 3}
-  controllerFixedPhoto: {fileID: 2800000, guid: 115d4d8e726a4900a02cbc48545c2d10, type: 3}
   doorName: Door 1
-  cableLabel: "D1 \xB7 READER \xB7 C01"
-  readerTerminalNames:
-  - +
-  - '-'
-  - A
-  - B
-  controllerTerminalNames:
-  - +12V
-  - '-'
-  - A
-  - B
-  readerLabelPos: {x: 0.316, y: 0.643}
-  readerTerminalPos:
-  - {x: 0.482, y: 0.393}
-  - {x: 0.4, y: 0.394}
-  - {x: 0.56, y: 0.393}
-  - {x: 0.62, y: 0.393}
-  readerZoom: 0.9
-  readerPan: {x: 0, y: 0.19}
-  controllerLabelPos: {x: 0.910, y: 0.190}
-  controllerTerminalPos:
-  - {x: 0.244, y: 0.468}
-  - {x: 0.243, y: 0.495}
-  - {x: 0.244, y: 0.438}
-  - {x: 0.248, y: 0.406}
-  controllerZoom: 0.9
-  controllerPan: {x: 0, y: -0.015}
+  cableLabel: IA|D1|READER|C01
+  reader:
+    photo: {fileID: 2800000, guid: d20d58ba597a4f04864a7f4fe51e8cef, type: 3}
+    points:
+    - {x: 0.482, y: 0.393}
+    - {x: 0.4, y: 0.394}
+    - {x: 0.56, y: 0.393}
+    - {x: 0.62, y: 0.393}
+    labelPos: {x: 0.316, y: 0.643}
+    labelSize: {x: 0.2, y: 0.1}
+    zoom: 1.3
+    pan: {x: 0, y: 0.115}
   readerColours: 07000000010000000200000003000000
-  controllerFoundColours: 07000000010000000300000002000000
   uncertainReaderTerminal: 3
-  aiDisagreesOnControllerTerminal: 1
-  startWithMissingLabel: 1
-  controllerNoLabelPlacement:
-    enabled: 1
-    terminalPos:
-    - {x: 0.294, y: 0.421}
-    - {x: 0.289, y: 0.452}
-    - {x: 0.293, y: 0.385}
-    - {x: 0.297, y: 0.349}
-    labelPos: {x: 0.74, y: 0.37}
-    labelSize: {x: 0.3, y: 0.15}
-    zoom: 1
-    pan: {x: 0, y: -0.055}
-  controllerFixedPlacement:
-    enabled: 1
-    terminalPos:
-    - {x: 0.237, y: 0.496}
-    - {x: 0.234, y: 0.520}
-    - {x: 0.240, y: 0.464}
-    - {x: 0.239, y: 0.436}
+  controllerFixed:
+    photo: {fileID: 2800000, guid: 115d4d8e726a4900a02cbc48545c2d10, type: 3}
+    points:
+    - {x: 0.235, y: 0.522}
+    - {x: 0.237, y: 0.493}
+    - {x: 0.238, y: 0.465}
+    - {x: 0.24, y: 0.436}
+    - {x: 0.242, y: 0.408}
+    - {x: 0.244, y: 0.38}
+    - {x: 0.246, y: 0.351}
+    - {x: 0.247, y: 0.323}
     labelPos: {x: 0.905, y: 0.196}
     labelSize: {x: 0.18, y: 0.085}
-    zoom: 0.9
+    zoom: 1
     pan: {x: 0, y: 0}
+  scenarios:
+  - name: A/B swapped
+    pinColours: 01000000070000000300000002000000ffffffffffffffffffffffffffffffff
+    wiring:
+      photo: {fileID: 2800000, guid: cca66540d5414d988adc8de9a2a976ae, type: 3}
+      points:
+      - {x: 0.242, y: 0.496}
+      - {x: 0.244, y: 0.467}
+      - {x: 0.245, y: 0.437}
+      - {x: 0.247, y: 0.407}
+      - {x: 0.249, y: 0.377}
+      - {x: 0.25, y: 0.348}
+      - {x: 0.252, y: 0.318}
+      - {x: 0.253, y: 0.288}
+      labelPos: {x: 0.91, y: 0.19}
+      labelSize: {x: 0.18, y: 0.09}
+      zoom: 1
+      pan: {x: 0, y: -0.015}
+    startWithMissingLabel: 1
+    noLabel:
+      photo: {fileID: 2800000, guid: 79c93e20302c463fbdbb5a2be6b21c7e, type: 3}
+      points:
+      - {x: 0.29, y: 0.454}
+      - {x: 0.292, y: 0.419}
+      - {x: 0.294, y: 0.384}
+      - {x: 0.297, y: 0.35}
+      - {x: 0.299, y: 0.315}
+      - {x: 0.301, y: 0.281}
+      - {x: 0.304, y: 0.246}
+      - {x: 0.306, y: 0.212}
+      labelPos: {x: 0.74, y: 0.37}
+      labelSize: {x: 0.3, y: 0.15}
+      zoom: 1
+      pan: {x: 0, y: -0.055}
+    aiDisagreesOnPin: 1
+  - name: B on O2 (wrong pin)
+    pinColours: 010000000700000002000000ffffffffffffffff03000000ffffffffffffffff
+    wiring:
+      photo: {fileID: 2800000, guid: 421009db46124051aeee9744fa70786b, type: 3}
+      points:
+      - {x: 0.235, y: 0.522}
+      - {x: 0.237, y: 0.493}
+      - {x: 0.238, y: 0.465}
+      - {x: 0.24, y: 0.436}
+      - {x: 0.242, y: 0.408}
+      - {x: 0.244, y: 0.38}
+      - {x: 0.246, y: 0.351}
+      - {x: 0.247, y: 0.323}
+      labelPos: {x: 0.905, y: 0.196}
+      labelSize: {x: 0.18, y: 0.085}
+      zoom: 1
+      pan: {x: 0, y: 0}
+    startWithMissingLabel: 0
+    noLabel:
+      photo: {fileID: 0}
+      points: []
+      labelPos: {x: 0.5, y: 0.7}
+      labelSize: {x: 0, y: 0}
+      zoom: 1
+      pan: {x: 0, y: 0}
+    aiDisagreesOnPin: 0
   handwrittenLabels: 1
-  readerLabelSize: {x: 0.20, y: 0.10}
-  controllerLabelSize: {x: 0.18, y: 0.09}
   markerScale: 0.65
   labelTextScale: 1
   snapshotOnLeft: 1

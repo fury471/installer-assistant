@@ -12,6 +12,9 @@ namespace InstallerAssistant.WizardOfOz
 
         public const float OffsetY = 346f;
 
+        /// <summary>Mock Reader 1 block: pin 1 at the left, 8 pins, in photo pixels.</summary>
+        public const float PinX0 = 330f, PinPitch = 60f, PinY = 520f + OffsetY;
+
         public static Texture2D Reader(Color[] wireColours)
         {
             var p = new Painter(W, H, 11);
@@ -46,7 +49,8 @@ namespace InstallerAssistant.WizardOfOz
             return p.ToTexture("Mock reader end");
         }
 
-        public static Texture2D Controller(Color[] wireColours, bool withLabel = true)
+        /// <summary>Mock controller end. pinColours: colour per Reader 1 pin 1-8 (alpha 0 = no wire).</summary>
+        public static Texture2D Controller(Color[] pinColours, bool withLabel = true)
         {
             var p = new Painter(W, H, 23);
             p.Gradient(new Color(0.88f, 0.89f, 0.90f), new Color(0.72f, 0.74f, 0.76f), 5f);
@@ -70,13 +74,17 @@ namespace InstallerAssistant.WizardOfOz
             // cable and wires into the reader block
             p.Line(540, 790, 540, 1990, 30, new Color(0.17f, 0.18f, 0.20f));
             p.Line(540, 790, 540, 1990, 22, new Color(0.22f, 0.23f, 0.25f));
-            for (int k = 0; k < 4; k++)
+            int used = 0;
+            for (int k = 0; k < 8 && k < pinColours.Length; k++) if (pinColours[k].a > 0) used++;
+            for (int k = 0, w = 0; k < 8 && k < pinColours.Length; k++)
             {
-                float x = 450 + 60 * k;
-                p.Wire(x, 565, x, 700, 540 + (k - 1.5f) * 14, 812, wireColours[k]);
+                if (pinColours[k].a <= 0) continue;
+                float x = PinX0 + PinPitch * k;
+                p.Wire(x, 565, x, 700, 540 + (w - (used - 1) * 0.5f) * 14, 812, pinColours[k]);
+                w++;
             }
 
-            // reader block: 8 terminals, ours are the middle four
+            // Reader 1 block: 8 pins, pin 1 (-) at the left
             p.RoundRect(300, 460, 780, 580, 14, new Color(0.08f, 0.09f, 0.10f));
             p.RoundRect(300, 460, 780, 480, 10, new Color(0.15f, 0.16f, 0.17f));
             for (int k = 0; k < 8; k++) p.Screw(330 + 60 * k, 520);

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Compiles the Unity project's domain sources directly; no copy, so the tests always test the app's code. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="DomainTests.cs" />
+    <Compile Include="../../unity/InstallerAssistant/Assets/_Project/Scripts/Verification/*.cs" />
+    <Compile Include="../../unity/InstallerAssistant/Assets/_Project/Scripts/Labels/CableLabel.cs" />
+    <Compile Include="../../unity/InstallerAssistant/Assets/_Project/Scripts/Records/RecordStore.cs" />
+  </ItemGroup>
+</Project>
