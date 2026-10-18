@@ -9,7 +9,7 @@ namespace InstallerAssistant.Records
     /// <summary>
     /// Keeps what was recorded at each end, keyed by the cable label, so the other end can be scanned
     /// later, possibly on another day, and in either order.
-    /// MVP: in memory on the phone. Later: a JSON file per site, or the customer's system.
+    /// InMemoryRecordStore: the Wizard of Oz and tests. JsonRecordStore: live, one JSON file on the phone.
     /// </summary>
     public interface IRecordStore
     {
@@ -17,6 +17,8 @@ namespace InstallerAssistant.Records
         void Save(ControllerRecord controllerEnd);
         bool TryGet(string cableKey, out CableRecord deviceEnd);
         bool TryGet(string cableKey, out ControllerRecord controllerEnd);
+        /// <summary>Forgets every record (a fresh site visit).</summary>
+        void Clear();
     }
 
     public sealed class InMemoryRecordStore : IRecordStore
@@ -27,6 +29,7 @@ namespace InstallerAssistant.Records
         public void Save(ControllerRecord controllerEnd) { controllers[controllerEnd.Label.Key] = controllerEnd; }
         public bool TryGet(string cableKey, out CableRecord deviceEnd) { return devices.TryGetValue(cableKey, out deviceEnd); }
         public bool TryGet(string cableKey, out ControllerRecord controllerEnd) { return controllers.TryGetValue(cableKey, out controllerEnd); }
+        public void Clear() { devices.Clear(); controllers.Clear(); }
     }
 
     /// <summary>

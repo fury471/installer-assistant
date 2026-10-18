@@ -8,6 +8,12 @@ namespace InstallerAssistant.Verification
     /// One physical action that repairs the wiring. Every red mark points to exactly one action, and
     /// the AR view draws it (a two-headed arrow for Swap, an arrow for Move). Text always comes from
     /// the rules, never from the AI, so it is exact.
+    ///
+    /// Wire colours carry no meaning of their own (assumption 7 in the design rationale): a wiring is correct when
+    /// both ends agree. So a fix that only exchanges the cable's own wires between pins the rule uses can be done
+    /// at either end; AtDeviceToo is then true and DeviceHeadline / DeviceText say the same fix on the device's
+    /// terminals. A wire on a pin the rule does not use, an extra wire or a loose wire can only be fixed at the
+    /// controller.
     /// </summary>
     public sealed class FixAction
     {
@@ -26,6 +32,12 @@ namespace InstallerAssistant.Verification
         /// <summary>What the installer would see on the powered device.</summary>
         public string Symptom;
         public bool TouchesPower;
+        /// <summary>The same result can be reached at the device end (see the class comment).</summary>
+        public bool AtDeviceToo;
+        /// <summary>Device terminal ids of the action at the device end (From is where a moved wire leaves).</summary>
+        public string DeviceFrom, DeviceTo;
+        /// <summary>The fix said on the device's terminals; null unless AtDeviceToo.</summary>
+        public string DeviceHeadline, DeviceText;
 
         public bool Involves(int pin) { return pin == FromPin || pin == ToPin; }
     }
@@ -51,6 +63,19 @@ namespace InstallerAssistant.Verification
         public RuleCheck(PinFinding[] pins, List<FixAction> fixes) { Pins = pins; Fixes = fixes; }
         public PinFinding Pin(int pin) { return Pins[pin - 1]; }
         public bool AllCorrect { get { return Fixes.Count == 0; } }
+        /// <summary>
+        /// True when every fix can be done at the device end, so an installer standing there fixes it there.
+        /// False when nothing is wrong, or when any fix needs the controller (then all fixes are shown there, in one place).
+        /// </summary>
+        public bool FixableAtDevice
+        {
+            get
+            {
+                if (Fixes.Count == 0) return false;
+                foreach (var f in Fixes) if (!f.AtDeviceToo) return false;
+                return true;
+            }
+        }
     }
 
     /// <summary>
@@ -136,6 +161,8 @@ namespace InstallerAssistant.Verification
 
         static string P(UsageRule r, int pin) { return r.Connector.Pin(pin).Label; }
         static string C(int c) { return WireColours.Lower(c); }
+        static string T(UsageRule r, string terminal) { return r.Terminal(terminal).Print; }
+        static string Device(UsageRule r) { return r.Usage.ToLowerInvariant(); }
 
         static FixAction Swap(UsageRule r, PinFinding a, PinFinding b)
         {
@@ -146,6 +173,16 @@ namespace InstallerAssistant.Verification
                 Text = "Swap the " + C(a.Expected) + " and " + C(b.Expected) + " wires: " + C(a.Expected) + " to " + P(r, a.Pin) +
                        ", " + C(b.Expected) + " to " + P(r, b.Pin) + ".",
             };
+            // at the device end: the two terminals take each other's wire, so each matches what its pin holds now
+            string ta = r.TerminalFor(a.Pin), tb = r.TerminalFor(b.Pin);
+            if (ta != null && tb != null)
+            {
+                f.AtDeviceToo = true;
+                f.DeviceFrom = ta; f.DeviceTo = tb;
+                f.DeviceHeadline = "Swap " + C(a.Expected) + " and " + C(b.Expected);
+                f.DeviceText = "Swap the " + C(a.Expected) + " and " + C(b.Expected) + " wires on the " + Device(r) + ": " +
+                               C(b.Expected) + " to " + T(r, ta) + ", " + C(a.Expected) + " to " + T(r, tb) + ".";
+            }
             Explain(r, f);
             return f;
         }
@@ -158,6 +195,16 @@ namespace InstallerAssistant.Verification
                 Headline = "Move " + C(colour) + " to " + r.Connector.Pin(to).Print,
                 Text = "Move the " + C(colour) + " wire from " + P(r, from) + " to " + P(r, to) + ".",
             };
+            // between two pins the rule uses, the device end can move the wire instead: from the terminal paired with
+            // 'to' to the terminal paired with 'from'. Several such moves (a rotation) add up to a consistent wiring.
+            string tFrom = r.TerminalFor(to), tTo = r.TerminalFor(from);
+            if (tFrom != null && tTo != null)
+            {
+                f.AtDeviceToo = true;
+                f.DeviceFrom = tFrom; f.DeviceTo = tTo;
+                f.DeviceHeadline = "Move " + C(colour) + " to " + r.Terminal(tTo).Print;
+                f.DeviceText = "Move the " + C(colour) + " wire on the " + Device(r) + " from " + T(r, tFrom) + " to " + T(r, tTo) + ".";
+            }
             Explain(r, f);
             return f;
         }

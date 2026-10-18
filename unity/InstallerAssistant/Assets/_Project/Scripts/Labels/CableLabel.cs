@@ -88,22 +88,4 @@ namespace InstallerAssistant.Labels
             return true;
         }
     }
-
-    public enum LabelScanStatus { Found, NotFound, Unreadable }
-
-    public sealed class LabelScan
-    {
-        public LabelScanStatus Status;
-        public CableLabel Label;
-    }
-
-    /// <summary>
-    /// Finds and decodes the cable label in the camera view.
-    /// Real implementation: decode QR codes from the AR camera image (e.g. ZXing.Net on the CPU image).
-    /// Wizard-of-Oz implementation: returns the scripted label after a delay.
-    /// </summary>
-    public interface ILabelScanner
-    {
-        IEnumerator Scan(Action<LabelScan> done);
-    }
 }

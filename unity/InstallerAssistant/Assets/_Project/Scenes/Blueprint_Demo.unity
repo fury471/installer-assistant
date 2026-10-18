@@ -129,6 +129,7 @@ GameObject:
   m_Component:
   - component: {fileID: 498911188}
   - component: {fileID: 498911187}
+  - component: {fileID: 498911189}
   m_Layer: 0
   m_Name: InstallerAssistantDemo
   m_TagString: Untagged
@@ -147,15 +148,38 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: ca6dcfbcd261bca4ca932cbb1ce5957b, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::InstallerAssistant.WizardOfOz.InstallerAssistantDemo
-  layout: {fileID: 11400000, guid: e6b4269c2c764af3864eee2fb3412b35, type: 2}
-  speed: 1
-  showOperatorHint: 1
+  m_EditorClassIdentifier: Assembly-CSharp::InstallerAssistant.App.InstallerApp
+  mode: 0
   confidenceThreshold: 0.8
-  scenario: 0
+  perceptionUrl: http://localhost:8000
+  recordsFile: installer-assistant-records.json
+  overlay:
+    markerScale: 0.8
+    labelTextScale: 1
+    tagsBelowTerminals: 1
+    snapshotOnLeft: 1
+    snapshotInset: 40
+    snapshotTopInset: 320
+    handwrittenLabels: 0
   fontRegular: {fileID: 12800000, guid: ef67af6217b44aa295f8c25aa1fd964a, type: 3}
   fontSemiBold: {fileID: 12800000, guid: 7cec3c0efbfb4a619530d89bfb6335d0, type: 3}
-  fontSerif: {fileID: 12800000, guid: 5a2625b0b599407d8e6222683e971f4d, type: 3}
+--- !u!114 &498911189
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 498911186}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0d335ba7ec9643fa9eb4b603b0730e02, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::InstallerAssistant.WizardOfOz.WizardOfOzRig
+  layout: {fileID: 11400000, guid: e6b4269c2c764af3864eee2fb3412b35, type: 2}
+  scenario: 0
+  startEnd: 1
+  speed: 1
+  showOperatorHint: 1
 --- !u!4 &498911188
 Transform:
   m_ObjectHideFlags: 0
