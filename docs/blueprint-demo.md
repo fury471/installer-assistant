@@ -1,12 +1,14 @@
-# MVP blueprint demo
+# Wizard-of-Oz mode
 
-The Wizard-of-Oz demo is the blueprint for the app. Its flow, screens, wiring rules, rule check, fix messages, verdicts, records and log are the app's real code. Only the three sensing services are scripted. Building the app means replacing those three services, nothing else.
+The app (`Scripts/App`) runs in Wizard-of-Oz mode on bench photos: its flow, screens, wiring rules, rule check, fix messages, verdicts, records and log are the real app. Only the camera and the sensing are scripted, by `WizardOfOzRig` (`Scripts/WizardOfOz`). The same app runs live when its mode is set to Live: see `docs/architecture.md`.
+
+This mode is the user-study fallback, the demo for Axis, and the reference the live parts are tested against.
 
 Design rationale for the report: see the "Installer Assistant – MVP Blueprint" doc.
 
 ## Run it
 
-1. Open `Assets/_Project/Scenes/Blueprint_Demo.unity`. It uses `Config/DemoLayout2` (real bench photos).
+1. Open `Assets/_Project/Scenes/Blueprint_Demo.unity` (the frozen fixture) or `App.unity` with Mode = Wizard of Oz. Both use `Config/DemoLayout2` (real bench photos), set on the `WizardOfOzRig` component.
 2. Game view: portrait, 1080 × 2340.
 3. Press Play, then click the Game view once so it receives keys.
 
@@ -28,12 +30,14 @@ The installer does not need to know anything before starting. The app learns eve
 2. **Either end first.** The label says which cable it is and which end the installer is at (`IA|D1|READER|C01|DEV` at the reader, `…|CTRL` at the controller). The app reads the wires at that end; the installer confirms them (one tap, or a tap on an amber wire the camera is unsure of) and saves.
 3. **Walk.** The app says where the other end is (from the label and the wiring rule: "AXIS A1610 · Reader 1 block" or "Door 1 · AXIS A4020-E reader"). **Finish later** keeps the cable on Home under "Waiting for the other end".
 4. **Pair and check.** At the other end the installer scans its label. The shared key pairs the two ends, and the rule check runs at once. The verdict is shown on the end in hand.
-5. **Fix.** Fixes are always shown on the controller block, with arrows between pins, because the A1610 defines what each pin does and a wrong-pin fault can only be fixed there. If the check ran at the reader and found a fault, the app sends the installer back to the controller ("Go back to the controller") and shows the fix there.
+5. **Fix where you stand.** Wire colours carry no meaning of their own, so a fault that only exchanges the cable's own wires (planted fault 1, A/B swapped) is fixed at whichever end the installer is at, with arrows between the terminals there. Only a fix that needs the controller (planted fault 2, B on O2) sends the installer back to it ("Go back to the controller"), and then every fix is shown there. Starting at the controller with fault 1 therefore ends with the fix at the reader; starting at the reader, both faults are fixed at the controller.
 6. **Report** when every wire matches.
 
-Settings → Demo: **Participant starts at** chooses which photo the first "Scan a cable" shows (reader end by default). The app logic itself does not depend on it.
+Settings → Wizard of Oz (operator): **Participant starts at** chooses which photo the first "Scan a cable" shows (reader end by default). The app itself does not depend on it: it learns the end from the label.
 
 In the session, "Rewired · check again" stands for the installer fixing the bench. The demo then shows the photo of the correctly wired board. For the live demo, re-wire the real bench at that moment.
+
+After a fix at the reader the demo shows `DemoLayout.readerFixed`. DemoLayout2 has no photo there yet, so a drawn reader with the new colours appears: take a photo of the bench reader with A and B swapped (yellow on A, green on B), assign it to Reader Fixed, then press `2`, go through to the fix, "Rewired · check again", and `K` to place the terminals.
 
 `Textures/Demo2/controller_wrongpin_edited.jpg` is `controller_fixed.jpg` with the yellow wire digitally moved to pin 6. Replace it with a real photo of that fault, then press `4`, `2` and `K` to place the pins.
 
@@ -41,19 +45,19 @@ In the session, "Rewired · check again" stands for the installer fixing the ben
 
 ```
 Scripts/
-  Verification/   domain, no Unity: AxisCatalog (A1610 + A4020-E facts), CableRecord (reader end),
-                  ControllerRecord (controller end), RuleChecker (fixes),
-                  ControllerCheck (verdict table)                                ← real, keep
-  Labels/         CableLabel (cable key + which end) + ILabelScanner             ← real parser; scanner to build
-  Detection/      IWireReader                                                    ← to build (layer 1)
-  AI/             ISecondOpinion                                                 ← to build (layer 3)
-  Records/        IRecordStore (both ends, keyed by cable), SessionLog (CSV)     ← real
-  UI/             UiKit (design system: colours, type, cards, buttons, icons),
-                  ArOverlay (markers, tag layout, fix arrows)                    ← real
-  WizardOfOz/     WozServices (scripted ILabelScanner / IWireReader / ISecondOpinion),
-                  DemoLayout (photos, positions, faults),
-                  InstallerAssistantDemo.cs (state, navigation), .Pages.cs (Home, Reports,
-                  Settings, report), .Check.cs (either end first, walk, pair, verdict, fix)
+  App/            InstallerApp.cs (state, start-up, operator API), .Pages.cs (Home, Reports, Settings, report),
+                  .Check.cs (scan, record, walk, pair, verdict, fix), Composition.cs (which services),
+                  Services.cs (ServiceSet, OverlayStyle, IServiceSource, IStudyOperator)        ← C
+  AR/             ICameraView (contract), ArCameraView (live: webcam now, AR Foundation next)    ← B
+  Labels/         CableLabel (shared), ILabelScanner (contract), QrLabelScanner (live)           ← A
+  Detection/      CameraFrame, IWireReader (contracts), PerceptionClient, PerceptionWireReader,
+                  PerceptionTestBench (live)                                                     ← A
+  AI/             ISecondOpinion (contract), PerceptionSecondOpinion (live)                      ← A
+  Records/        IRecordStore, InMemoryRecordStore, SessionLog, JsonRecordStore (live)          ← C
+  Verification/   AxisCatalog, CableRecord, ControllerRecord, RuleChecker, ControllerCheck       ← shared
+  UI/             UiKit (design system), ArOverlay (markers, tag layout, fix arrows)             ← C
+  WizardOfOz/     WizardOfOzRig (services + operator keys), PhotoCameraView (photos, calibration),
+                  WozServices (scripted scanner, reader, second opinion), DemoLayout, MockPhotos ← C
 Fonts/            Inter Regular + SemiBold (the only typeface), SIL OFL
 ```
 
@@ -77,18 +81,21 @@ Type: Inter only. SemiBold for headlines (54–72 px, tracking −1.5), row titl
 
 The camera photo always fills the screen, like a real camera feed. If a view's `zoom` is below what its `pan` needs, the photo is scaled up to cover the screen, and the pan never goes past the photo's edges.
 
-The fonts are created at runtime from the TTFs assigned on the `InstallerAssistantDemo` component. If they are left empty, the TextMesh Pro default font is used.
+The fonts are created at runtime from the TTFs assigned on the `InstallerApp` component. If they are left empty, the TextMesh Pro default font is used.
 
-## Replacing the Wizard of Oz
+## From the Wizard of Oz to live
 
-| Service | Wizard-of-Oz version | Real version |
-| --- | --- | --- |
-| `ILabelScanner` | `WozLabelScanner` returns the layout's label, with the end of the photo shown | QR decoding (e.g. ZXing.Net) on the AR camera CPU image; labels printed in pairs (`…\|DEV`, `…\|CTRL`). A label without an end code would make the app ask "Which end is this?" (not built in the demo) |
-| `IWireReader` | `WozWireReader` returns the layout's colours | AR image target of the board → terminal crop → VLM, JSON answer |
-| `ISecondOpinion` | `WozSecondOpinion` compares and disagrees once | Separate VLM call with both crops and the pairing rule |
-| Terminal positions | `DemoLayout` points on the photo | Same points relative to the tracked board (image target) |
+Each scripted service has a live counterpart behind the same contract; `App/Composition.cs` picks them from the app's mode. Every service gets a `CameraFrame` and returns where it found things in that frame as normalised `ImagePoint`s (x and y from 0 to 1, y down); the camera view anchors them.
 
-In `InstallerAssistantDemo.Restart`, construct the real classes instead of the `Woz…` ones. The flow does not change.
+| Contract | Owner | Wizard of Oz | Live |
+| --- | --- | --- | --- |
+| `ICameraView` | B · AR runtime | `PhotoCameraView`: the photo of the end, frames without pixels | `ArCameraView`: webcam now; ARCore CPU image, intrinsics, pose and world anchors next |
+| `ILabelScanner.Scan(frame)` | A · Perception and AI | `WozLabelScanner`: the layout's label and its corners | `QrLabelScanner`: ZXing.Net on the frame |
+| `IWireReader.Read…End(rule, frame)` | A · Perception and AI | `WozWireReader`: the layout's colours and points | `PerceptionWireReader` → `ml/perception_service` `/read` |
+| `ISecondOpinion.Compare(record, deviceFrame, controllerFrame)` | A · Perception and AI | `WozSecondOpinion`: disagrees once | `PerceptionSecondOpinion` → `/compare` |
+| `IRecordStore` | C · App and records | `InMemoryRecordStore` | `JsonRecordStore` |
+
+The contracts are frozen: change one only with a pull request all three approve.
 
 ## Tests
 

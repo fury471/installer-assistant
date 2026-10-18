@@ -14,24 +14,62 @@ namespace InstallerAssistant.Verification
     }
 
     /// <summary>
-    /// What the wire reader saw at the device end: one colour per device terminal, in the rule's terminal order.
-    /// Confidence is 0-1 per terminal.
+    /// A point in a camera frame, normalised to the frame: X 0..1 left to right, Y 0..1 top to bottom.
+    /// Valid is false when the reader could not place the point.
+    /// </summary>
+    public struct ImagePoint
+    {
+        public float X, Y;
+        public bool Valid;
+        public ImagePoint(float x, float y) { X = x; Y = y; Valid = true; }
+        public static readonly ImagePoint None = new ImagePoint();
+        public override string ToString() { return Valid ? "(" + X.ToString("0.000") + ", " + Y.ToString("0.000") + ")" : "(none)"; }
+    }
+
+    /// <summary>
+    /// What the wire reader saw at the device end, per device terminal in the rule's terminal order:
+    /// the colour, a 0-1 confidence and where the terminal is in the frame that was read.
     /// </summary>
     public sealed class DeviceEndReading
     {
         public readonly int[] Colours;
         public readonly float[] Confidence;
-        public DeviceEndReading(int[] colours, float[] confidence) { Colours = colours; Confidence = confidence; }
+        /// <summary>Terminal position in the frame (normalised); the AR runtime anchors markers here.</summary>
+        public readonly ImagePoint[] Positions;
+        /// <summary>Id of the camera frame the reading was made from (0 = unknown).</summary>
+        public readonly long FrameId;
+
+        public DeviceEndReading(int[] colours, float[] confidence, ImagePoint[] positions = null, long frameId = 0)
+        {
+            Colours = colours; Confidence = confidence;
+            Positions = positions ?? new ImagePoint[colours.Length];
+            FrameId = frameId;
+        }
     }
 
-    /// <summary>What the wire reader saw at the controller: one colour (or None) per pin of the block, index = pin - 1.</summary>
+    /// <summary>
+    /// What the wire reader saw at the controller, per pin of the block (index = pin - 1):
+    /// the colour (or None), a 0-1 confidence and where the pin is in the frame that was read.
+    /// </summary>
     public sealed class ControllerReading
     {
         public readonly int[] Colours;
         public readonly float[] Confidence;
-        public ControllerReading(int[] colours, float[] confidence) { Colours = colours; Confidence = confidence; }
+        /// <summary>Pin position in the frame (normalised); the AR runtime anchors markers here.</summary>
+        public readonly ImagePoint[] Positions;
+        /// <summary>Id of the camera frame the reading was made from (0 = unknown).</summary>
+        public readonly long FrameId;
+
+        public ControllerReading(int[] colours, float[] confidence, ImagePoint[] positions = null, long frameId = 0)
+        {
+            Colours = colours; Confidence = confidence;
+            Positions = positions ?? new ImagePoint[colours.Length];
+            FrameId = frameId;
+        }
+
         public int ColourOnPin(int pin) { return Colours[pin - 1]; }
         public float ConfidenceOnPin(int pin) { return Confidence[pin - 1]; }
+        public ImagePoint PositionOfPin(int pin) { return Positions[pin - 1]; }
     }
 
     /// <summary>

@@ -19,6 +19,18 @@ static class T
         CableLabel l; CableLabel.TryParse("IA|D1|READER|C01", out l);
         return new CableRecord(l, AxisCatalog.OsdpReaderOnReader1, c, new bool[4], DateTime.Now);
     }
+    /// <summary>The device-end record after the installer did every fix at the device end.</summary>
+    static CableRecord FixedAtDevice(CableRecord r, RuleCheck check)
+    {
+        var c = (int[])r.Colours.Clone();
+        foreach (var f in check.Fixes)
+        {
+            var rule = r.Rule;
+            if (f.Kind == FixKind.Swap) { c[rule.TerminalIndex(f.DeviceFrom)] = f.Colour2; c[rule.TerminalIndex(f.DeviceTo)] = f.Colour; }
+            else c[rule.TerminalIndex(f.DeviceTo)] = f.Colour;
+        }
+        return new CableRecord(r.Label, r.Rule, c, new bool[c.Length], DateTime.Now);
+    }
     static ControllerReading Pins(params int[] c) { return new ControllerReading(c, Enumerable.Repeat(0.95f, c.Length).ToArray()); }
 
     static int Main()
@@ -78,6 +90,23 @@ static class T
         Console.WriteLine("     rotation -> " + string.Join(" / ", c6.Fixes.Select(f => f.Text)));
         Eq(c6.Pins.Where(p => !p.RulesOk).All(p => p.Fix != null), true, "every wrong pin has a fix");
 
+        // fix where you stand: colours carry no meaning, so swaps and rotations among the cable's own pins can be
+        // fixed at the device end too; a wrong pin, an extra or a loose wire only at the controller
+        Eq(c1.FixableAtDevice, true, "A/B swap can be fixed at the reader");
+        Eq(c1.Fixes[0].DeviceText, "Swap the green and yellow wires on the reader: yellow to A, green to B.", "swap text at the reader");
+        Eq(RuleChecker.Check(FixedAtDevice(rec, c1), Pins(K, O, Y, G, N, N, N, N)).AllCorrect, true, "A/B swap fixed at the reader -> correct");
+        Eq(c3.FixableAtDevice, true, "power reversal can be fixed at the reader");
+        Eq(RuleChecker.Check(FixedAtDevice(rec, c3), Pins(O, K, G, Y, N, N, N, N)).AllCorrect, true, "power reversal fixed at the reader -> correct");
+        Eq(c6.FixableAtDevice, true, "rotation can be fixed at the reader");
+        Console.WriteLine("     rotation at the reader -> " + string.Join(" / ", c6.Fixes.Select(f => f.DeviceText)));
+        Eq(RuleChecker.Check(FixedAtDevice(rec, c6), Pins(K, Y, O, G, N, N, N, N)).AllCorrect, true, "rotation fixed at the reader -> correct");
+        Eq(c2.FixableAtDevice, false, "B on O2 needs the controller");
+        Eq(c4.FixableAtDevice, false, "loose wire at the controller needs the controller");
+        Eq(c5.FixableAtDevice, false, "extra wire needs the controller");
+        Eq(ok.FixableAtDevice, false, "nothing to fix -> not 'fixable at the reader'");
+        var mixed = RuleChecker.Check(rec, Pins(O, K, G, N, N, Y, N, N));   // power reversed and B on O2
+        Eq(mixed.FixableAtDevice, false, "one controller-only fix sends every fix to the controller");
+
         // verdict table
         CheckReason why;
         Eq(VerdictCombiner.Combine(true, Opinion.Match, .9f, .8f, out why), Verdict.Correct, "correct+match -> green");
@@ -121,6 +150,19 @@ static class T
         store.Save(cr);
         ControllerRecord back; CableRecord none;
         Eq(store.TryGet(dev.Key, out back) && !store.TryGet(dev.Key, out none), true, "store keeps the controller end under the cable key");
+        store.Clear();
+        Eq(store.TryGet(dev.Key, out back), false, "a fresh site visit clears the store");
+        CableLabel door2;
+        CableLabel.TryParse("IA|D2|READER|C02|DEV", out door2);
+        Eq(dev.Pairs(door2) || dev.Pairs(dev.AtEnd(CableEnd.Device)), false, "a different cable or the same end does not pair");
+
+        // readings carry where each terminal is, so live markers can be anchored without hand-placed points
+        var placed = new ControllerReading(new[] { K, O, G, Y, N, N, N, N }, Enumerable.Repeat(0.9f, 8).ToArray(),
+            new[] { new ImagePoint(0.24f, 0.52f), new ImagePoint(0.24f, 0.49f), new ImagePoint(0.24f, 0.47f), new ImagePoint(0.24f, 0.44f),
+                    ImagePoint.None, ImagePoint.None, ImagePoint.None, ImagePoint.None }, 42);
+        Eq(placed.PositionOfPin(3).Valid && placed.FrameId == 42, true, "controller reading keeps pin positions and frame id");
+        Eq(Pins(K, O, G, Y, N, N, N, N).Positions.Length == 8 && !Pins(K, O, G, Y, N, N, N, N).Positions[0].Valid, true, "positions default to unknown");
+        Eq(RuleChecker.Check(Rec(O, K, G, Y), placed).AllCorrect, true, "positions do not change the rule check");
 
         Console.WriteLine(fails == 0 ? "ALL PASSED" : fails + " FAILED");
         return fails;

@@ -1,0 +1,12 @@
+# Perception service and evaluation (Python 3.10+). Install: python -m pip install -r ml/requirements.txt
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+numpy>=1.26
+opencv-python-headless>=4.9   # template matching / homography (classical reader)
+pillow>=10.2
+pytest>=8.0
+httpx>=0.27                   # FastAPI TestClient
+# Optional, add when you start on them:
+# onnxruntime>=1.17          # run an exported model in the service (the same .onnx can later run on the phone with Unity Sentis)
+# anthropic>=0.40            # VLM reader / second opinion (key in secrets.json or an environment variable, never in Git)

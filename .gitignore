@@ -84,3 +84,6 @@ desktop.ini
 !tools/**/*.csproj
 tools/**/bin/
 tools/**/obj/
+
+# pytest
+.pytest_cache/

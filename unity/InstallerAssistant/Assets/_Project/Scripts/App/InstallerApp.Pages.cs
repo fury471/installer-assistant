@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using InstallerAssistant.AR;
 using InstallerAssistant.Labels;
 using InstallerAssistant.UI;
 using InstallerAssistant.Verification;
@@ -9,15 +10,15 @@ using UnityEngine;
 using UnityEngine.UI;
 using static InstallerAssistant.UI.UiKit;
 
-namespace InstallerAssistant.WizardOfOz
+namespace InstallerAssistant.App
 {
     /// <summary>
     /// The app around the check: Home (one action: scan a cable), saved reports and settings.
     /// There is no job list to read first: the label on the cable tells the app what it is, so the
-    /// installer starts wherever they are. Past checks are demo data; every page uses the real rules and records.
-    /// One column, cards on a light page, one primary action per screen.
+    /// installer starts wherever they are. Every page uses the real rules and records; the one example report
+    /// on Reports exists only in the Wizard of Oz. One column, white page, one primary action per screen.
     /// </summary>
-    public partial class InstallerAssistantDemo
+    public partial class InstallerApp
     {
         enum Tab { Home, Reports, Settings }
 
@@ -25,12 +26,22 @@ namespace InstallerAssistant.WizardOfOz
 
         // ================================================================== Home
 
+        /// <summary>
+        /// Home, top to bottom: who and when, what happened (a timeline), and the one action docked at the bottom,
+        /// where the thumb rests and where it stays put however long the timeline grows.
+        /// </summary>
         void ShowHome()
         {
-            bool pending = liveCable.State == CableState.OneEnd;
+            var pendingList = Pending();
+            var pending = pendingList.Count > 0 ? pendingList[0] : null;
             var s = NewScreen(Page);
-            var c = Scroll(s, 0, TabBarH + (pending ? 156 : 0));
+            // the dock is built first so the timeline above it can scroll clear of it, whatever its height
+            var dock = ScanDock(s, pending);
+            float dockTop = dock.offsetMax.y;
+            var c = Scroll(s, 0, dockTop + 24);
+            dock.SetAsLastSibling();
 
+            // 1. header
             var brand = HRow(c, 96, 18);
             var mark = Img("Mark", brand, sRound, Accent, 18);
             Fixed(mark.rectTransform, 60, 60);
@@ -39,45 +50,27 @@ namespace InstallerAssistant.WizardOfOz
             Flex(Txt(brand, "Installer Assistant", Small, Ink, Face.Semi));
             Txt(brand, DateTime.Now.ToString("ddd d MMM"), Caption, Ink3, Face.Regular, TextAlignmentOptions.Right);
             Space(c, 4);
-
             Txt(c, "Check a cable", DisplaySize, Ink, Face.Semi);
             Txt(c, "Start at either end. The label tells the app which cable it is and what to do next.", Body, Ink2);
-            Space(c, 8);
 
-            // the one action, with its three steps shown once as feedforward
-            var hero = Card(c, 40, 32);
-            var head = HRow(hero, 0, 28);
-            var ring = Img("Viewfinder", head, sCircle, AccentSoft, 0);
-            Fixed(ring.rectTransform, 112, 112);
-            var cam = UiKit.Rect("Icon", ring.rectTransform); Stretch(cam);
-            DrawIcon(cam, Icon.Camera, 56, Accent);
-            var ht = VBox(head, 4); Flex(ht);
-            Txt(ht, "Scan a cable label", Head, Ink, Face.Semi);
-            Txt(ht, "At the reader or the controller. The app pairs the two ends.", Small, Ink2);
-
-            var steps = HRow(hero, 0, 12);
-            steps.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = true;
-            steps.GetComponent<HorizontalLayoutGroup>().childAlignment = TextAnchor.UpperCenter;
-            MiniStep(steps, "1", "Scan one end");
-            MiniStep(steps, "2", "Scan the other end");
-            MiniStep(steps, "3", "Fix what is red");
-
-            var go = HRow(hero, 144);
-            go.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = true;
-            Btn(go, "Scan a cable", ButtonKind.Primary, () => StartCheck(NextEnd()), 144);
-
-            // what happened today, newest first, as a timeline
+            // 2. activity, newest first, as a timeline
+            Space(c, 32);
+            OverlineText(c, "Activity", Ink);
+            Space(c, 4);
             var items = new List<TimelineItem>();
-            if (pending)
+            foreach (var pc in pendingList)
+            {
+                var c1 = pc;
                 items.Add(new TimelineItem
                 {
-                    Time = liveCable.SavedAt.ToString("HH:mm"), Title = liveCable.Title + " · " + EndName(liveCable.FirstEnd) + " end saved",
-                    Line = "Scan the " + EndName(Other(liveCable.FirstEnd)) + " end to finish the check.", Highlight = true,
-                    Chip = p => Chip(p, "1 of 2 ends", WarnSoft, WarnInk), Tap = () => StartCheck(NextEnd()),
+                    Time = c1.SavedAt.ToString("HH:mm"), Title = c1.Title + " · " + EndName(c1, c1.FirstEnd) + " end saved",
+                    Line = "Scan the " + EndName(c1, Other(c1.FirstEnd)) + " end to finish the check.", Highlight = true,
+                    Chip = p => Chip(p, "1 of 2 ends", WarnSoft, WarnInk), Tap = () => StartCheck(Other(c1.FirstEnd)),
                 });
+            }
             var sorted = new List<Report>(reports);
             sorted.Sort((x, y) => y.At.CompareTo(x.At));
-            for (int i = 0; i < sorted.Count && i < 4; i++)
+            for (int i = 0; i < sorted.Count && i < 6; i++)
             {
                 var rep = sorted[i];
                 items.Add(new TimelineItem
@@ -87,31 +80,84 @@ namespace InstallerAssistant.WizardOfOz
                     Chip = p => Chip(p, "Verified", OkSoft, Ok), Tap = () => ShowReport(rep, false),
                 });
             }
-            if (items.Count > 0)
-            {
-                Space(c, 16);
-                OverlineText(c, "Activity", Ink);
-                Space(c, 4);
-                Timeline(c, items);
-            }
+            if (items.Count > 0) Timeline(c, items);
+            else Txt(c, "Nothing checked yet. Scan a cable to start.", Small, Ink3);
 
+            // 3. the one action, docked above the tab bar (built first, drawn last)
             TabBar(s, Tab.Home);
-            if (pending) PendingBar(s);
         }
 
-        string EndName(CableEnd e) { return e == CableEnd.Controller ? "controller" : cable.Usage.ToLowerInvariant(); }
-
-        void MiniStep(RectTransform parent, string n, string text)
+        /// <summary>
+        /// The scan action, docked above the tab bar. Its height follows its content, so the text never squeezes:
+        /// a header (icon, title, one line), a three-step stepper joined by a line, and the button.
+        /// </summary>
+        RectTransform ScanDock(RectTransform s, Cable pending)
         {
-            var box = VBox(parent, 10);
+            var dock = Card(s, 48, 40);
+            dock.anchorMin = new Vector2(0, 0); dock.anchorMax = new Vector2(1, 0); dock.pivot = new Vector2(0.5f, 0);
+            dock.offsetMin = new Vector2(Gutter, TabBarH + 24); dock.offsetMax = new Vector2(-Gutter, TabBarH + 24 + 600);
+
+            string other = pending != null ? EndName(pending, Other(pending.FirstEnd)) : null;
+            var head = HRow(dock, 0, 32);
+            head.GetComponent<HorizontalLayoutGroup>().childAlignment = TextAnchor.MiddleLeft;
+            var ring = Img("Viewfinder", head, sCircle, AccentSoft, 0);
+            Fixed(ring.rectTransform, 104, 104);
+            var cam = UiKit.Rect("Icon", ring.rectTransform); Stretch(cam);
+            DrawIcon(cam, Icon.Camera, 52, Accent);
+            var ht = VBox(head, 10); Flex(ht);
+            Txt(ht, pending != null ? "Finish " + pending.Title : "Scan a cable label", Head, Ink, Face.Semi);
+            Txt(ht, pending != null ? "It is waiting for its " + other + " end." : "At the reader or the controller. The app pairs the two ends.", Small, Ink2).lineSpacing = 10;
+
+            // the three steps, shown once as feedforward; the current one is blue
+            int current = pending != null ? 2 : 1;
+            var steps = HRow(dock, 0, 0);
+            var shl = steps.GetComponent<HorizontalLayoutGroup>();
+            shl.childForceExpandWidth = true; shl.childAlignment = TextAnchor.UpperCenter;
+            shl.padding = new RectOffset(0, 0, 8, 0);
+            var track = Img("Track", steps, null, Hex("#D5D9E0"), 0);   // joins the three numbers; hidden behind them
+            track.gameObject.AddComponent<LayoutElement>().ignoreLayout = true;
+            track.rectTransform.anchorMin = new Vector2(1f / 6f, 1); track.rectTransform.anchorMax = new Vector2(5f / 6f, 1);
+            track.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            track.rectTransform.sizeDelta = new Vector2(0, 3); track.rectTransform.anchoredPosition = new Vector2(0, -8 - 28);
+            if (current > 1)
+            {
+                var doneTrack = Img("Done", steps, null, Ok, 0);
+                doneTrack.gameObject.AddComponent<LayoutElement>().ignoreLayout = true;
+                doneTrack.rectTransform.anchorMin = new Vector2(1f / 6f, 1); doneTrack.rectTransform.anchorMax = new Vector2(0.5f, 1);
+                doneTrack.rectTransform.sizeDelta = new Vector2(0, 3); doneTrack.rectTransform.anchoredPosition = new Vector2(0, -8 - 28);
+            }
+            MiniStep(steps, "1", "Scan one end", current == 1, current > 1);
+            MiniStep(steps, "2", "Scan the other end", current == 2, false);
+            MiniStep(steps, "3", "Fix what is red", false, false);
+
+            var go = HRow(dock, 144);
+            go.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = true;
+            Btn(go, pending != null ? "Scan the " + other + " end" : "Scan a cable", ButtonKind.Primary, () => StartCheck(NextEnd()), 144);
+
+            // size the dock to its content now, so the scroll area above can stop where the dock starts
+            LayoutRebuilder.ForceRebuildLayoutImmediate(dock);
+            float h = LayoutUtility.GetPreferredHeight(dock);
+            dock.offsetMax = new Vector2(-Gutter, TabBarH + 24 + h);
+            return dock;
+        }
+
+        static string EndName(Cable c, CableEnd e) { return e == CableEnd.Controller ? "controller" : c.Label.Usage.ToLowerInvariant(); }
+
+        void MiniStep(RectTransform parent, string n, string text, bool now, bool done)
+        {
+            var box = VBox(parent, 14);
             box.GetComponent<VerticalLayoutGroup>().childAlignment = TextAnchor.UpperCenter;
             box.GetComponent<VerticalLayoutGroup>().childForceExpandWidth = false;
-            Flex(box);
-            var num = Img("Num", box, sCircle, Surface, 0);
-            Fixed(num.rectTransform, 52, 52);
-            var t = Txt(num.rectTransform, n, Caption, Ink, Face.Semi, TextAlignmentOptions.Center);
-            Stretch(t.rectTransform);
-            Txt(box, text, Caption, Ink2, Face.Regular, TextAlignmentOptions.Center);
+            var le = Flex(box);
+            le.preferredWidth = 0; le.minWidth = 0;   // three equal columns, so the numbers sit on the joining line
+            var num = Img("Num", box, sCircle, now ? Accent : done ? Ok : Surface, 0);
+            Fixed(num.rectTransform, 56, 56);
+            var holder = UiKit.Rect("Mark", num.rectTransform); Stretch(holder);
+            if (done) DrawIcon(holder, Icon.Check, 32, OnColour);
+            else { var t = Txt(holder, n, Caption, now ? OnColour : Ink2, Face.Semi, TextAlignmentOptions.Center); Stretch(t.rectTransform); }
+            var label = Txt(box, text, Small - 2, now ? Accent : done ? Ink : Ink2, now ? Face.Semi : Face.Regular, TextAlignmentOptions.Center);
+            label.textWrappingMode = TextWrappingModes.NoWrap;   // one line each, so the three labels line up
+            label.enableAutoSizing = true; label.fontSizeMin = 24; label.fontSizeMax = Small - 2;
         }
 
         class TimelineItem
@@ -160,29 +206,6 @@ namespace InstallerAssistant.WizardOfOz
                 if (it.Chip != null) it.Chip(titleRow);
                 if (!string.IsNullOrEmpty(it.Line)) Txt(body, it.Line, Small, Ink2);
             }
-        }
-
-        /// <summary>A floating bar above the tab bar for the cable that waits for its other end: always one tap away.</summary>
-        void PendingBar(RectTransform s)
-        {
-            var holder = UiKit.Rect("PendingBar", s);
-            holder.anchorMin = new Vector2(0, 0); holder.anchorMax = new Vector2(1, 0); holder.pivot = new Vector2(0.5f, 0);
-            holder.offsetMin = new Vector2(Gutter, TabBarH + 24); holder.offsetMax = new Vector2(-Gutter, TabBarH + 24 + 112);
-            Shadow(holder, 24, 0.10f, 6);
-            var edge = Img("Edge", holder, sRound, Hairline, 56);
-            Stretch(edge.rectTransform);
-            var bar = Img("Bar", edge.rectTransform, sRound, Surface, 54);
-            Stretch(bar.rectTransform, 2, 2, 2, 2);
-            MakeButton(bar, () => StartCheck(NextEnd()));
-            var hl = bar.gameObject.AddComponent<HorizontalLayoutGroup>();
-            hl.padding = new RectOffset(40, 32, 0, 0); hl.spacing = 18; hl.childAlignment = TextAnchor.MiddleLeft;
-            hl.childControlWidth = true; hl.childControlHeight = true; hl.childForceExpandWidth = false; hl.childForceExpandHeight = false;
-            var dot = Img("Dot", bar.rectTransform, sCircle, Warn, 0); Fixed(dot.rectTransform, 18, 18);
-            Txt(bar.rectTransform, liveCable.Title, Small, Ink, Face.Semi).textWrappingMode = TextWrappingModes.NoWrap;
-            Flex(Txt(bar.rectTransform, "1 of 2 ends", Caption, Ink3));
-            Txt(bar.rectTransform, "Scan the " + EndName(Other(liveCable.FirstEnd)) + " end", Small, Accent, Face.Semi).textWrappingMode = TextWrappingModes.NoWrap;
-            var chev = UiKit.Rect("Chevron", bar.rectTransform); Fixed(chev, 24, 36);
-            DrawIcon(chev, Icon.ChevronRight, 34, Accent);
         }
 
         // ================================================================== reports
@@ -236,25 +259,34 @@ namespace InstallerAssistant.WizardOfOz
 
             if (r.Live)
             {
-                OverlineText(c, "Evidence", Ink3);
-                var thumbs = HRow(c, 330, 20);
-                thumbs.GetComponent<HorizontalLayoutGroup>().childForceExpandHeight = true;
-                Thumb(thumbs, ReaderTexture(), CropRect(L.reader.points, ReaderTexture()), "Reader end");
-                var ft = ControllerTexture(L.controllerFixed, null, true);
-                Thumb(thumbs, ft, CropRect(UsedPins(L.controllerFixed.points), ft), "Controller end");
-
-                OverlineText(c, "Wiring", Ink3);
-                var w = Card(c, 40, 6);
-                for (int i = 0; i < rule.Pairs.Length; i++)
+                var ds = r.Cable.DeviceShot; var cs = r.Cable.ControllerShot;
+                bool hasD = ds != null && ds.Image != null, hasC = cs != null && cs.Image != null;
+                if (hasD || hasC)
                 {
-                    if (i > 0) Divider(w);
-                    var p = rule.Pairs[i];
-                    var row = HRow(w, 84, 18);
-                    int col = record != null ? record.ColourOn(p.DeviceTerminal) : -1;
-                    Swatch(row, col, 34);
-                    Flex(Txt(row, WireColours.Name(col), Body, Ink), 170);
-                    Flex(Txt(row, "Reader " + rule.Terminal(p.DeviceTerminal).Print + "  →  pin " + p.ControllerPin + " (" + rule.Connector.Pin(p.ControllerPin).Print + ")", Small, Ink2));
-                    Badge(row, Ok, Icon.Check, 40);
+                    OverlineText(c, "Evidence", Ink3);
+                    var thumbs = HRow(c, 330, 20);
+                    thumbs.GetComponent<HorizontalLayoutGroup>().childForceExpandHeight = true;
+                    if (hasD) Thumb(thumbs, ds.Image, CropRect(ds.Points, ds.Image), EndTitleOf(r.Cable.Label, CableEnd.Device));
+                    if (hasC) Thumb(thumbs, cs.Image, CropRect(UsedPins(cs.Points, r.Record != null ? r.Record.Rule : rule), cs.Image), "Controller end");
+                }
+
+                if (r.Record != null)
+                {
+                    var ru = r.Record.Rule;
+                    OverlineText(c, "Wiring", Ink3);
+                    var w = Card(c, 40, 6);
+                    for (int i = 0; i < ru.Pairs.Length; i++)
+                    {
+                        if (i > 0) Divider(w);
+                        var p = ru.Pairs[i];
+                        var row = HRow(w, 84, 18);
+                        int col = r.Record.ColourOn(p.DeviceTerminal);
+                        Swatch(row, col, 34);
+                        Flex(Txt(row, WireColours.Name(col), Body, Ink), 170);
+                        Flex(Txt(row, EndTitleOf(r.Cable.Label, CableEnd.Device).Replace(" end", "") + " " + ru.Terminal(p.DeviceTerminal).Print +
+                            "  →  pin " + p.ControllerPin + " (" + ru.Connector.Pin(p.ControllerPin).Print + ")", Small, Ink2));
+                        Badge(row, Ok, Icon.Check, 40);
+                    }
                 }
             }
 
@@ -317,25 +349,28 @@ namespace InstallerAssistant.WizardOfOz
             int th = confidenceThreshold < 0.75f ? 0 : confidenceThreshold < 0.85f ? 1 : 2;
             Segmented(chk, new[] { "70 %", "80 %", "90 %" }, th, i => confidenceThreshold = 0.7f + 0.1f * i);
 
-            OverlineText(c, "Demo (operator)", Ink3);
-            var demo = Card(c, 40, 24);
-            SettingRow(demo, "Participant starts at", "The end shown when \"Scan a cable\" is pressed first. The app itself does not need to know.", null);
-            Segmented(demo, new[] { "Reader end", "Controller end" }, demoStart == CableEnd.Device ? 0 : 1,
-                i => { demoStart = i == 0 ? CableEnd.Device : CableEnd.Controller; ShowSettings(); });
-            Divider(demo);
-            SettingRow(demo, "Planted fault", "Restarts the site visit with this fault on the bench.", null);
-            var names = new List<string>();
-            for (int i = 0; L.scenarios != null && i < L.scenarios.Length && i < 3; i++) names.Add(L.scenarios[i].name);
-            Segmented(demo, names.ToArray(), scenario, i => { ChooseScenario(i, false); ResetDemoData(); ShowSettings(); });
-            Divider(demo);
-            SettingRow(demo, "Start without the label", "At the controller, the app first asks for a missing label.",
-                row => Switch(row, plantMissingLabel, v => plantMissingLabel = v));
-            Divider(demo);
-            SettingRow(demo, "Operator keys", "Show the key line at the top of the screen.",
-                row => Switch(row, showOperatorHint, v => { showOperatorHint = v; UpdateHint(); }));
-            Divider(demo);
-            var reset = HRow(demo, 0);
-            Btn(reset, "Reset demo data", ButtonKind.Secondary, () => { ResetDemoData(); Toast("Demo data reset"); ShowSettings(); }, 112);
+            if (op != null)
+            {
+                OverlineText(c, "Wizard of Oz (operator)", Ink3);
+                var demo = Card(c, 40, 24);
+                SettingRow(demo, "Participant starts at", "The end shown when \"Scan a cable\" is pressed first. The app itself does not need to know.", null);
+                Segmented(demo, new[] { "Reader end", "Controller end" }, op.StartEnd == CableEnd.Controller ? 1 : 0,
+                    i => { op.StartEnd = i == 0 ? CableEnd.Device : CableEnd.Controller; ShowSettings(); });
+                Divider(demo);
+                SettingRow(demo, "Planted fault", "Restarts the site visit with this fault on the bench.", null);
+                var names = new List<string>();
+                for (int i = 0; op.FaultNames != null && i < op.FaultNames.Length && i < 3; i++) names.Add(op.FaultNames[i]);
+                Segmented(demo, names.ToArray(), op.Fault, i => { op.ChooseFault(i); ResetSession(); ShowSettings(); });
+                Divider(demo);
+                SettingRow(demo, "Start without the label", "At the controller, the app first asks for a missing label.",
+                    row => Switch(row, op.StartWithoutLabel, v => op.StartWithoutLabel = v));
+                Divider(demo);
+                SettingRow(demo, "Operator keys", "Show the key line at the top of the screen.",
+                    row => Switch(row, op.ShowOperatorKeys, v => op.ShowOperatorKeys = v));
+                Divider(demo);
+                var reset = HRow(demo, 0);
+                Btn(reset, "Reset demo data", ButtonKind.Secondary, () => { ResetSession(); Toast("Demo data reset"); ShowSettings(); }, 112);
+            }
 
             OverlineText(c, "About", Ink3);
             var about = Card(c, 40, 6);
@@ -343,7 +378,7 @@ namespace InstallerAssistant.WizardOfOz
             Divider(about);
             KeyRow(about, "Wiring rules", "AXIS A1610 · A4020-E");
             Divider(about);
-            KeyRow(about, "Sensing", "Wizard of Oz (scripted)");
+            KeyRow(about, "Sensing", op != null ? "Wizard of Oz (scripted)" : "Live (camera and perception)");
             TabBar(s, Tab.Settings);
         }
 

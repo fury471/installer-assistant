@@ -1,0 +1,38 @@
+# Who reviews what (README → Team and ownership). To use it: replace the placeholders with GitHub user names,
+# copy this file to .github/CODEOWNERS, and turn on "Require review from Code Owners" for main.
+# The last matching line wins.
+
+*                                                             @fury471 @B-HANDLE @C-HANDLE
+
+# Package A · Perception and AI
+/ml/                                                          @fury471
+/unity/InstallerAssistant/Assets/_Project/Scripts/Detection/  @fury471
+/unity/InstallerAssistant/Assets/_Project/Scripts/AI/         @fury471
+/unity/InstallerAssistant/Assets/_Project/Scripts/Labels/QrLabelScanner.cs  @fury471
+/unity/InstallerAssistant/Assets/_Project/Scenes/Sandbox/Perception_Test.unity  @fury471
+
+# Package B · AR runtime and device
+/unity/InstallerAssistant/Assets/_Project/Scripts/AR/         @B-HANDLE
+/unity/InstallerAssistant/Assets/_Project/Scenes/App.unity    @B-HANDLE
+/unity/InstallerAssistant/ProjectSettings/                    @B-HANDLE
+
+# Package C · App, records and study
+/unity/InstallerAssistant/Assets/_Project/Scripts/App/        @C-HANDLE
+/unity/InstallerAssistant/Assets/_Project/Scripts/Records/    @C-HANDLE
+/unity/InstallerAssistant/Assets/_Project/Scripts/UI/         @C-HANDLE
+/unity/InstallerAssistant/Assets/_Project/Scripts/WizardOfOz/ @C-HANDLE
+/unity/InstallerAssistant/Assets/_Project/Scenes/Blueprint_Demo.unity  @C-HANDLE
+/docs/                                                        @C-HANDLE
+
+# Shared contracts: all three
+/unity/InstallerAssistant/Assets/_Project/Scripts/Verification/          @fury471 @B-HANDLE @C-HANDLE
+/unity/InstallerAssistant/Assets/_Project/Scripts/Labels/CableLabel.cs   @fury471 @B-HANDLE @C-HANDLE
+/unity/InstallerAssistant/Assets/_Project/Scripts/Labels/ILabelScanner.cs  @fury471 @B-HANDLE @C-HANDLE
+/unity/InstallerAssistant/Assets/_Project/Scripts/AR/ICameraView.cs      @fury471 @B-HANDLE @C-HANDLE
+/unity/InstallerAssistant/Assets/_Project/Scripts/Detection/CameraFrame.cs  @fury471 @B-HANDLE @C-HANDLE
+/unity/InstallerAssistant/Assets/_Project/Scripts/Detection/IWireReader.cs  @fury471 @B-HANDLE @C-HANDLE
+/unity/InstallerAssistant/Assets/_Project/Scripts/AI/ISecondOpinion.cs   @fury471 @B-HANDLE @C-HANDLE
+/unity/InstallerAssistant/Assets/_Project/Scripts/Records/RecordStore.cs @fury471 @B-HANDLE @C-HANDLE
+/unity/InstallerAssistant/Assets/_Project/Scripts/App/Services.cs        @fury471 @B-HANDLE @C-HANDLE
+/ml/perception_service/schemas.py                             @fury471 @B-HANDLE @C-HANDLE
+/unity/InstallerAssistant/Assets/_Project/Scripts/Detection/PerceptionClient.cs  @fury471 @C-HANDLE

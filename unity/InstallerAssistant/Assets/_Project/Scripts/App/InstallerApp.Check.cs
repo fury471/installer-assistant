@@ -2,51 +2,48 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using InstallerAssistant.AI;
+using InstallerAssistant.AR;
+using InstallerAssistant.Detection;
 using InstallerAssistant.Labels;
 using InstallerAssistant.Records;
 using InstallerAssistant.UI;
 using InstallerAssistant.Verification;
 using TMPro;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using static InstallerAssistant.UI.UiKit;
-#if UNITY_EDITOR
-using UnityEditor;
-#endif
 
-namespace InstallerAssistant.WizardOfOz
+namespace InstallerAssistant.App
 {
     /// <summary>
     /// The check itself, on the camera view. The installer starts at whichever end of the cable is in front of
     /// them. The label tells the app which cable it is and which end; the app records that end, sends the installer
     /// to the other end, pairs the two scans by the label, and shows the verdict where the installer stands.
-    /// Fixes are always shown on the controller block, where the A1610 defines what each pin does.
+    /// Fixes are shown where the installer stands when that end can do them (a swap among the cable's own wires);
+    /// a fix that needs the controller (a wire on an unused pin, an extra or a loose wire) sends them there.
     ///
-    /// Light floating controls over the camera image, one bottom sheet that always says what to do next,
-    /// and markers, tags and fix arrows anchored on the terminals.
+    /// The camera image comes from ICameraView (a photo in the Wizard of Oz, the AR camera live). Markers are
+    /// placed where the readers found the terminals: the app anchors each position in the view and asks the view
+    /// every frame where it is now, so markers stay on the terminals while the phone moves.
     /// </summary>
-    public partial class InstallerAssistantDemo
+    public partial class InstallerApp
     {
+        /// <summary>How long the app keeps looking for a label before it asks the installer for help.</summary>
+        const float LabelSearchSeconds = 2f;
+
         // ------------------------------------------------------------------ view state of the check
 
-        bool atController, checkAborted, needsFixAtController;
-        DemoLayout.PhotoView view;
-        readonly Dictionary<DemoLayout.PhotoView, Texture2D> mockCache = new Dictionary<DemoLayout.PhotoView, Texture2D>();
+        bool atController, checkAborted, needsFixAtController, modalOpen, snapshotExpanded, labelBoxOn;
+        CableEnd marksEnd;
         readonly List<PinMarker> marks = new List<PinMarker>();
         readonly List<FixArrow> arrows = new List<FixArrow>();
         readonly Dictionary<int, RectTransform> snapshotDots = new Dictionary<int, RectTransform>();
         readonly List<RectTransform> pulseRings = new List<RectTransform>();
-        readonly List<PinMarker> hiddenBeforeCalibration = new List<PinMarker>();
         int tagSide;
         PinMarker tapped;
-        bool modalOpen, calibrating, snapshotExpanded;
-        int calibStep;
-        Vector2 calibPin1;
+        Vector2 labelExtent;
 
-        RectTransform camRoot, mover, photoRT, markersRT, scanLine, qrBox, missingGuide;
-        RawImage photo;
-        AspectRatioFitter photoFit;
+        RectTransform camRoot, markersRT, scanLine, qrBox, missingGuide;
         TextMeshProUGUI titleText, stepLine, instructionText, sheetTitle, sheetSub, qrCaption;
         Image instructionDot;
         CanvasGroup instructionGroup, sheetGroup, snapshotGroup, flashGroup;
@@ -55,111 +52,93 @@ namespace InstallerAssistant.WizardOfOz
         void ClearCheckViews()
         {
             foreach (var a in arrows) a.Destroy();
-            arrows.Clear(); marks.Clear(); snapshotDots.Clear(); pulseRings.Clear(); hiddenBeforeCalibration.Clear();
-            camRoot = mover = photoRT = markersRT = scanLine = qrBox = missingGuide = null;
+            arrows.Clear(); marks.Clear(); snapshotDots.Clear(); pulseRings.Clear();
+            if (camRoot != null && view != null) view.Detach();
+            camRoot = markersRT = scanLine = qrBox = missingGuide = null;
             sheet = sheetContent = sheetButtons = snapshot = snapshotHighlight = null;
-            photo = null; view = null; qrCaption = null;
-            modalOpen = false; snapshotExpanded = false;
-            if (calibrating) { calibrating = false; if (calibGroup != null) calibGroup.gameObject.SetActive(false); }
+            qrCaption = null;
+            modalOpen = false; snapshotExpanded = false; labelBoxOn = false;
+            if (canvasBackground != null) canvasBackground.enabled = true;
+        }
+
+        void ClearCheckState()
+        {
+            cable = null; current = null; record = null; ctrlRecord = null;
+            check = null; results = null;
+            readColours = null; readConfidence = null; readEdited = null;
         }
 
         // ------------------------------------------------------------------ words the app derives from the label
 
         static CableEnd Other(CableEnd e) { return e == CableEnd.Controller ? CableEnd.Device : CableEnd.Controller; }
-        string DeviceWord { get { return cable != null ? cable.Usage.ToLowerInvariant() : "reader"; } }
+        string DeviceWord { get { return cable != null ? cable.Usage.ToLowerInvariant() : "device"; } }
         string EndWord(CableEnd e) { return e == CableEnd.Controller ? "controller" : DeviceWord; }
-        string EndTitle(CableEnd e) { return e == CableEnd.Controller ? "Controller end" : char.ToUpperInvariant(DeviceWord[0]) + DeviceWord.Substring(1) + " end"; }
-        string CableTitle { get { return cable.DoorName + " " + DeviceWord; } }
+        string EndTitle(CableEnd e) { return e == CableEnd.Unknown ? "Scan a cable" : EndTitleOf(cable, e); }
+        static string EndTitleOf(CableLabel label, CableEnd e)
+        {
+            if (e == CableEnd.Controller) return "Controller end";
+            string w = label != null ? label.Usage.ToLowerInvariant() : "device";
+            return char.ToUpperInvariant(w[0]) + w.Substring(1) + " end";
+        }
+        string CableTitle { get { return cable != null ? cable.DoorName + " " + DeviceWord : "this cable"; } }
         /// <summary>Where the given end is, from the label and the wiring rule: the installer never has to look it up.</summary>
         string WhereIs(CableEnd e)
         {
             return e == CableEnd.Controller ? Short(rule.ControllerModel) + " · " + rule.Connector.Name + " block"
                                             : cable.DoorName + " · " + Short(rule.DeviceModel) + " " + DeviceWord;
         }
-        /// <summary>The end to scan next when the installer presses "Scan a cable".</summary>
+        /// <summary>The end the installer most likely is at when they press "Scan a cable" (the label decides).</summary>
         CableEnd NextEnd()
         {
-            if (record != null && ctrlRecord == null) return CableEnd.Controller;
-            if (ctrlRecord != null && record == null) return CableEnd.Device;
-            if (record != null && ctrlRecord != null) return CableEnd.Controller;
-            return demoStart;
+            var pending = Pending();
+            if (pending.Count > 0) return Other(pending[0].FirstEnd);
+            return op != null ? op.StartEnd : CableEnd.Unknown;
         }
 
         // ================================================================== start, flow, exit
 
-        /// <param name="end">The end the installer is at now.</param>
-        /// <param name="fillOtherEnd">Operator shortcut: pretend the other end was already recorded as configured.</param>
-        void StartCheck(CableEnd end, bool fillOtherEnd = false)
+        /// <param name="expected">The end the installer is probably at; Unknown is fine, the label decides.</param>
+        void StartCheck(CableEnd expected)
         {
             StopAllCoroutines();
             toastCo = null;
-            world = new WozWorld { Layout = L, Scenario = Scenario, Speed = speed, LabelAttached = !plantMissingLabel };
-            labels = new WozLabelScanner(world);
-            wires = new WozWireReader(world);
-            secondOpinion = new WozSecondOpinion(world);
+            if (toastGroup != null) toastGroup.alpha = 0;
+            ClearCheckState();
             log = new SessionLog(() => Time.unscaledTime - startTime, DateTime.Now.ToString("yyyyMMdd-HHmmss"));
-            check = null; results = null;
             fixesOnFirstCheck = 0; confirmedByYou = 0; firstFixText = null; needsFixAtController = false;
             checkAborted = false; clicked = null; tapped = null;
-            readColours = null; readConfidence = null; readEdited = null;
-
-            if (fillOtherEnd) FillEnd(Other(end));
-            world.Record = record;
-            if (ctrlRecord != null) world.LabelAttached = true;   // the controller label was already scanned on an earlier visit
+            if (op != null) op.BeginCheck();
 
             BuildCheckScreen();
             startTime = Time.unscaledTime;
-            log.Add("start", "scenario=" + Scenario.name + "; at=" + CableLabel.EndCode(end) +
-                "; saved=" + (record != null ? "DEV" : "") + (ctrlRecord != null ? "CTRL" : "") + "; second_opinion=" + useSecondOpinion);
-            StartCoroutine(CheckFlow(end));
+            log.Add("start", "mode=" + (op != null ? "wizard_of_oz" : "live") + "; expected=" + CableLabel.EndCode(expected) +
+                "; second_opinion=" + useSecondOpinion + (op != null && op.FaultNames != null && op.Fault < op.FaultNames.Length ? "; fault=" + op.FaultNames[op.Fault] : ""));
+            StartCoroutine(CheckFlow(expected));
         }
 
-        /// <summary>Operator shortcut: records one end as the layout describes it, without the camera.</summary>
-        void FillEnd(CableEnd e)
+        IEnumerator CheckFlow(CableEnd expected)
         {
-            var now = DateTime.Now;
-            if (e == CableEnd.Device)
-            {
-                int n = rule.DeviceTerminals.Length;
-                var c = new int[n];
-                for (int i = 0; i < n; i++) c[i] = Mathf.Clamp(Get(L.readerColours, i, i), 0, WireColours.Names.Length - 1);
-                record = new CableRecord(cable.AtEnd(CableEnd.Device), rule, c, new bool[n], now);
-                records.Save(record);
-            }
-            else
-            {
-                int n = rule.Connector.Count;
-                var pins = new int[n]; var conf = new float[n];
-                for (int p = 0; p < n; p++) { pins[p] = Get(Scenario.pinColours, p, WireColours.None); conf[p] = 0.95f; }
-                ctrlRecord = new ControllerRecord(cable.AtEnd(CableEnd.Controller), rule, pins, conf, new bool[n], now);
-                records.Save(ctrlRecord);
-            }
-            MarkOneEnd(e, now);
-        }
+            CableEnd here = CableEnd.Unknown;
+            yield return Arrive(expected, null, "Scan the label", "The label tells the app which cable this is and which end you are at.", e => here = e);
+            if (checkAborted) yield break;
 
-        void MarkOneEnd(CableEnd e, DateTime at)
-        {
-            if (liveCable.State == CableState.Verified) return;
-            if (liveCable.State != CableState.OneEnd) { liveCable.FirstEnd = e; liveCable.SavedAt = at; }
-            liveCable.State = CableState.OneEnd;
-        }
-
-        IEnumerator CheckFlow(CableEnd end)
-        {
-            bool otherEndSaved = end == CableEnd.Controller ? record != null : ctrlRecord != null;
+            bool otherEndSaved = here == CableEnd.Controller ? record != null : ctrlRecord != null;
             if (!otherEndSaved)
             {
-                // first end: find out what this is, and record it
-                if (end == CableEnd.Device) yield return RecordReaderEnd();
-                else yield return RecordControllerEnd();
+                // first end: record what is there, then send the installer to the other end
+                SetTitle(EndTitle(here), CableTitle + " · end 1 of 2");
+                yield return RecordEnd(here);
                 if (checkAborted) yield break;
-                yield return WalkScreen(Other(end), false);
+                yield return WalkScreen(Other(here), false);
                 if (checkAborted) yield break;
-                end = Other(end);
+                var first = cable;
+                yield return Arrive(Other(here), first, "End 2 of 2", "The label pairs this end with the " + EndWord(here) + " end you saved.", e => here = e);
+                if (checkAborted) yield break;
             }
 
-            // second end: pair by the label, check, fix
-            if (end == CableEnd.Controller) yield return ControllerSecond();
+            // second end: the label has paired it; check, fix
+            SetTitle(EndTitle(here), CableTitle + " · end 2 of 2");
+            if (here == CableEnd.Controller) yield return ControllerSecond();
             else
             {
                 yield return ReaderSecond();
@@ -168,21 +147,23 @@ namespace InstallerAssistant.WizardOfOz
                 {
                     yield return WalkScreen(CableEnd.Controller, true);
                     if (checkAborted) yield break;
+                    yield return Arrive(CableEnd.Controller, cable, "Fix", "Scan the label to show the fix on this block.", e => here = e);
+                    if (checkAborted) yield break;
+                    SetTitle(EndTitle(CableEnd.Controller), CableTitle + " · fix");
                     yield return ControllerFix();
                 }
             }
-            if (checkAborted || pendingRestart >= 0) yield break;
+            if (checkAborted) yield break;
 
             float secs = Time.unscaledTime - startTime;
-            liveCable.State = CableState.Verified;
-            liveCable.When = "today";
+            current.State = CableState.Verified;
             var rep = new Report
             {
-                Cable = liveCable, At = DateTime.Now, Fixes = fixesOnFirstCheck, CheckedByYou = confirmedByYou,
+                Cable = current, Record = record, At = DateTime.Now, Fixes = fixesOnFirstCheck, CheckedByYou = confirmedByYou,
                 Wires = rule.DeviceTerminals.Length, Seconds = secs, Live = true,
                 FixText = firstFixText ?? "No fixes needed: both ends match.",
             };
-            reports.RemoveAll(x => x.Cable == liveCable);
+            reports.RemoveAll(x => x.Cable == current);
             reports.Add(rep);
             log.Add("verified", "seconds=" + secs.ToString("0.0") + "; fixes=" + fixesOnFirstCheck + "; checked_by_you=" + confirmedByYou);
             yield return Shutter();
@@ -199,107 +180,185 @@ namespace InstallerAssistant.WizardOfOz
 
         // ================================================================== arriving at an end
 
-        /// <summary>Shows the camera on this end and scans its label. The label says which cable and which end.</summary>
-        IEnumerator Arrive(CableEnd end, string step, string why)
+        /// <summary>
+        /// The installer is at an end: show it, scan its label and learn from the label which cable and which end
+        /// this is. With 'pairWith', the label must be the other end of that cable.
+        /// </summary>
+        IEnumerator Arrive(CableEnd expected, CableLabel pairWith, string step, string why, Action<CableEnd> done)
         {
-            atController = end == CableEnd.Controller;
-            world.AtController = atController;
             readColours = null; readConfidence = null; readEdited = null;   // a new end: nothing read here yet
             foreach (var a in arrows) a.Destroy();
             arrows.Clear();
-            if (atController)
-            {
-                var sc = Scenario;
-                bool noLabelPhoto = !world.LabelAttached && (sc.noLabel.photo != null || L.UsesMockImages);
-                SetView(noLabelPhoto ? sc.noLabel : sc.wiring,
-                        noLabelPhoto ? ControllerTexture(sc.noLabel, sc.pinColours, false) : ControllerTexture(sc.wiring, sc.pinColours, true));
-                BuildControllerMarks();
-            }
-            else
-            {
-                SetView(L.reader, ReaderTexture());
-                BuildReaderMarks();
-            }
-            SetTitle(EndTitle(end), step);
-            yield return ScanLabel(why);
+            ClearMarks();
+            if (snapshot != null) snapshot.gameObject.SetActive(false);
+            atController = expected == CableEnd.Controller;
+            view.ShowEnd(expected);
+            // before the first label the app does not know which end this is: the label will tell
+            SetTitle(pairWith == null ? "Scan a cable" : EndTitle(expected), step);
+
+            CableEnd here = CableEnd.Unknown;
+            yield return ScanLabel(expected, pairWith, why, e => here = e);
+            atController = here == CableEnd.Controller;
+            if (here != expected) view.ShowEnd(here);
+            BuildMarks(here);
+            done(here);
         }
 
-        IEnumerator ScanLabel(string why)
+        IEnumerator ScanLabel(CableEnd expected, CableLabel pairWith, string why, Action<CableEnd> done)
         {
-            var sc = Scenario;
             while (true)
             {
                 Instruction("Point the camera at the cable label", Accent);
                 Sheet("Scan the cable label", why);
                 ProgressLine("Looking for the " + LabelWord(), true);
-                LabelScan scan = null;
                 scanLine.gameObject.SetActive(true);
-                yield return labels.Scan(s => scan = s);
+                LabelScan scan = null;
+                CameraFrame frame = null;
+                float t0 = Time.unscaledTime;
+                while (true)
+                {
+                    scan = null;
+                    frame = view.Latest;
+                    yield return labels.Scan(frame, s => scan = s);
+                    if (scan != null && scan.Status == LabelScanStatus.Found) break;
+                    if (Time.unscaledTime - t0 >= LabelSearchSeconds) break;
+                    yield return null;
+                }
                 scanLine.gameObject.SetActive(false);
-                if (scan.Status != LabelScanStatus.Found)
+
+                if (scan == null || scan.Status == LabelScanStatus.Unreadable)
+                {
+                    log.Add("label_unreadable");
+                    Instruction("The label can't be read", Warn);
+                    Sheet("Can't read the label", "Move a little closer, hold the phone still and keep the whole label in view.");
+                    Btn(sheetButtons, "Scan again", ButtonKind.Primary, () => clicked = "again");
+                    yield return WaitClick();
+                    continue;
+                }
+                if (scan.Status == LabelScanStatus.NotFound)
                 {
                     // without the label there is no pairing, so the app asks for it instead of guessing
                     log.Add("label_missing");
                     Instruction("No label on this cable", Warn);
                     ShowMissingGuide(true);
-                    bool known = record != null || ctrlRecord != null;
                     Sheet("Label missing", "The app can't tell which cable this is. Attach " +
-                        (known ? "the label " + cable.Display : "the cable's label") + " to this end, then scan again.");
+                        (pairWith != null ? "the label " + pairWith.Display : "the cable's label") + " to this end, then scan again.");
                     Btn(sheetButtons, "Label attached · scan again", ButtonKind.Primary, () => clicked = "labelled");
                     yield return WaitClick();
                     ShowMissingGuide(false);
-                    world.LabelAttached = true;
-                    if (atController) SetView(sc.wiring, ControllerTexture(sc.wiring, sc.pinColours, true));
+                    if (op != null) op.LabelAttached();
+                    view.ShowEnd(expected);
                     continue;
                 }
-                cable = scan.Label;
-                var r = AxisCatalog.Lookup(cable.Usage);
-                if (r != null) rule = r;
+
+                var label = scan.Label;
+                CableEnd end = label.End != CableEnd.Unknown ? label.End
+                             : pairWith != null && pairWith.End != CableEnd.Unknown ? Other(pairWith.End) : expected;
+                if (pairWith != null && label.Key != pairWith.Key)
+                {
+                    log.Add("label_other_cable", label.Display);
+                    Instruction("This is another cable", Warn);
+                    Sheet("This is another cable", "This label is " + label.Display + ". Find the other end of " + pairWith.Display + " and scan its label.");
+                    Btn(sheetButtons, "Scan again", ButtonKind.Primary, () => clicked = "again");
+                    yield return WaitClick();
+                    continue;
+                }
+                if (pairWith != null && pairWith.End != CableEnd.Unknown && end == pairWith.End)
+                {
+                    log.Add("label_same_end", label.Display);
+                    Instruction("This end is already saved", Warn);
+                    Sheet("This end is already saved", "This is the " + EndWord(end) + " end of " + pairWith.Display + ". Go to the " +
+                        EndWord(Other(end)) + " end and scan the label there.");
+                    Btn(sheetButtons, "Scan again", ButtonKind.Primary, () => clicked = "again");
+                    yield return WaitClick();
+                    continue;
+                }
+                var r = AxisCatalog.Lookup(label.Usage);
+                if (r == null)
+                {
+                    log.Add("label_unknown_usage", label.Display);
+                    Instruction("Unknown cable type", Warn);
+                    Sheet("Unknown cable type", "The app has no wiring rule for \"" + label.Usage + "\" (label " + label.Display + ").");
+                    Btn(sheetButtons, "Scan again", ButtonKind.Primary, () => clicked = "again");
+                    yield return WaitClick();
+                    continue;
+                }
+                rule = r;
+                cable = label;
+                if (end == CableEnd.Unknown)
+                {
+                    // the label does not say which end it is, and nothing else does: ask once
+                    Instruction("Which end is this?", Accent);
+                    Sheet("Which end is this?", "The label of " + label.Display + " does not say. Choose the end you are at.");
+                    Btn(sheetButtons, "Controller end", ButtonKind.Secondary, () => clicked = "ctrl");
+                    Btn(sheetButtons, EndTitleOf(label, CableEnd.Device), ButtonKind.Primary, () => clicked = "dev");
+                    yield return WaitClick();
+                    end = clicked == "ctrl" ? CableEnd.Controller : CableEnd.Device;
+                }
+
+                cable = label.AtEnd(end);
+                current = CableFor(cable);
+                records.TryGet(cable.Key, out record);
+                records.TryGet(cable.Key, out ctrlRecord);
                 if (qrCaption != null) qrCaption.text = cable.Display;
-                ShowQr(view.labelPos);
+                ShowLabelBox(scan, frame);
                 yield return Wait(0.25f);
                 Instruction("Label found · hold steady", Ok);
-                log.Add("label_found", cable.Display + " · " + CableLabel.EndCode(cable.End));
+                log.Add("label_found", cable.Display + " · " + CableLabel.EndCode(end) +
+                    "; saved=" + (record != null ? "DEV" : "") + (ctrlRecord != null ? "CTRL" : ""));
                 yield return Wait(0.9f);
-                qrBox.gameObject.SetActive(false);
+                labelBoxOn = false;
+                done(end);
                 yield break;
             }
         }
 
-        // ================================================================== first end: record what is there
-
-        IEnumerator RecordReaderEnd()
+        /// <summary>Frames the label where the scanner found it (its corners), anchored in the camera view.</summary>
+        void ShowLabelBox(LabelScan scan, CameraFrame frame)
         {
-            yield return Arrive(CableEnd.Device, "End 1 of 2", "The label tells the app which cable this is and which end you are at.");
-            SetTitle(EndTitle(CableEnd.Device), CableTitle + " · end 1 of 2");
-            yield return ConfirmWires("Save " + DeviceWord + " end");
-
-            record = new CableRecord(cable, rule, (int[])readColours.Clone(), (bool[])readEdited.Clone(), DateTime.Now);
-            records.Save(record);
-            world.Record = record;
-            int edits = CountEdits();
-            confirmedByYou += edits;
-            log.Add("reader_saved", "colours=" + string.Join(" ", Array.ConvertAll(readColours, WireColours.Name)) + "; edited=" + edits);
-            MarkOneEnd(CableEnd.Device, DateTime.Now);
-            yield return Shutter();
-            Toast(EndTitle(CableEnd.Device) + " saved");
-            yield return Wait(0.6f);
+            Vector2 c = view.LabelHint;
+            labelExtent = Vector2.zero;
+            bool ok = scan.Corners != null && scan.Corners.Length >= 4;
+            if (ok) foreach (var p in scan.Corners) ok &= p.Valid;
+            if (ok)
+            {
+                float x0 = 1, x1 = 0, y0 = 1, y1 = 0;
+                foreach (var p in scan.Corners) { x0 = Mathf.Min(x0, p.X); x1 = Mathf.Max(x1, p.X); y0 = Mathf.Min(y0, p.Y); y1 = Mathf.Max(y1, p.Y); }
+                c = new Vector2((x0 + x1) / 2, (y0 + y1) / 2);
+                labelExtent = new Vector2(x1 - x0, y1 - y0);
+            }
+            view.Anchor(CameraKeys.Label, new ImagePoint(c.x, c.y), frame);
+            var caption = (RectTransform)qrBox.Find("LabelText");
+            float edge = c.x > 0.65f ? 1f : c.x < 0.35f ? 0f : 0.5f;
+            caption.anchorMin = caption.anchorMax = new Vector2(edge, 1);
+            caption.pivot = new Vector2(edge, 0.5f);
+            labelBoxOn = true;
         }
 
-        IEnumerator RecordControllerEnd()
-        {
-            yield return Arrive(CableEnd.Controller, "End 1 of 2", "The label tells the app which cable this is and which end you are at.");
-            SetTitle(EndTitle(CableEnd.Controller), CableTitle + " · end 1 of 2");
-            yield return ConfirmWires("Save controller end");
+        // ================================================================== first end: record what is there
 
-            ctrlRecord = new ControllerRecord(cable, rule, (int[])readColours.Clone(), (float[])readConfidence.Clone(), (bool[])readEdited.Clone(), DateTime.Now);
-            records.Save(ctrlRecord);
+        IEnumerator RecordEnd(CableEnd end)
+        {
+            yield return ConfirmWires("Save " + EndWord(end) + " end");
+            var now = DateTime.Now;
+            if (end == CableEnd.Device)
+            {
+                record = new CableRecord(cable.AtEnd(CableEnd.Device), rule, (int[])readColours.Clone(), (bool[])readEdited.Clone(), now);
+                records.Save(record);
+            }
+            else
+            {
+                ctrlRecord = new ControllerRecord(cable.AtEnd(CableEnd.Controller), rule, (int[])readColours.Clone(), (float[])readConfidence.Clone(),
+                    (bool[])readEdited.Clone(), now);
+                records.Save(ctrlRecord);
+            }
             int edits = CountEdits();
             confirmedByYou += edits;
-            log.Add("controller_saved", "pins=" + string.Join(" ", Array.ConvertAll(readColours, WireColours.Name)) + "; edited=" + edits);
-            MarkOneEnd(CableEnd.Controller, DateTime.Now);
+            log.Add(end == CableEnd.Device ? "reader_saved" : "controller_saved",
+                "colours=" + string.Join(" ", Array.ConvertAll(readColours, WireColours.Name)) + "; edited=" + edits);
+            MarkOneEnd(current, end, now);
             yield return Shutter();
-            Toast("Controller end saved");
+            Toast(EndTitle(end) + " saved");
             yield return Wait(0.6f);
         }
 
@@ -339,7 +398,7 @@ namespace InstallerAssistant.WizardOfOz
                     yield return ReadWires(b2);
                     continue;
                 }
-                if (clicked == "save")
+                if (clicked == "save" && Shown().Count > 0)
                 {
                     var open = Shown().Find(x => x.State == Mark.Check);
                     if (open != null) { Toast("Check " + open.Name + " first: tap it"); continue; }
@@ -358,11 +417,13 @@ namespace InstallerAssistant.WizardOfOz
 
         IEnumerator ReadWires(Image bar)
         {
+            var end = atController ? CableEnd.Controller : CableEnd.Device;
             foreach (var m in marks) if (m.State != Mark.Edited) m.Set(atController ? Mark.Hidden : Mark.Reading, m.Colour, null);
-            int[] colours = null; float[] conf = null;
+            int[] colours = null; float[] conf = null; ImagePoint[] where = null;
+            var frame = view.Latest;
             scanLine.gameObject.SetActive(true);
-            if (atController) StartCoroutine(wires.ReadControllerEnd(rule, r => { colours = r.Colours; conf = r.Confidence; }));
-            else StartCoroutine(wires.ReadDeviceEnd(rule, r => { colours = r.Colours; conf = r.Confidence; }));
+            if (atController) StartCoroutine(wires.ReadControllerEnd(rule, frame, r => { where = r.Positions; conf = r.Confidence; colours = r.Colours; }));
+            else StartCoroutine(wires.ReadDeviceEnd(rule, frame, r => { where = r.Positions; conf = r.Confidence; colours = r.Colours; }));
             yield return ProgressUntil(bar, () => colours != null, 2.4f);
             scanLine.gameObject.SetActive(false);
 
@@ -371,12 +432,34 @@ namespace InstallerAssistant.WizardOfOz
             {
                 readColours = new int[n]; readConfidence = new float[n]; readEdited = new bool[n];
             }
+            AnchorMarks(end, where, frame);
+            TakeSnapshot(end, where, frame);
             for (int i = 0; i < n; i++)
             {
-                if (!readEdited[i]) { readColours[i] = colours[i]; readConfidence[i] = conf[i]; }
+                if (!readEdited[i]) { readColours[i] = Get(colours, i, WireColours.None); readConfidence[i] = Get(conf, i, 0f); }
                 SetReadMark(i);
             }
-            log.Add(atController ? "controller_read" : "reader_read", "unsure=" + marks.FindAll(x => x.State == Mark.Check).Count);
+            log.Add(atController ? "controller_read" : "reader_read", "frame=" + frame.Id + "; unsure=" + marks.FindAll(x => x.State == Mark.Check).Count);
+        }
+
+        /// <summary>
+        /// Tells the camera view where the reader found each terminal (index = terminal for the device end, pin - 1
+        /// for the controller), in the frame it read. The view keeps them on the terminals from then on.
+        /// </summary>
+        void AnchorMarks(CableEnd end, ImagePoint[] where, CameraFrame frame)
+        {
+            if (where == null) return;
+            for (int i = 0; i < marks.Count && i < where.Length; i++)
+                if (where[i].Valid) view.Anchor(CameraKeys.Of(end, i), where[i], frame);
+        }
+
+        /// <summary>Keeps a still of this end with its positions and the frame it was read from (for the other end and the report).</summary>
+        void TakeSnapshot(CableEnd end, ImagePoint[] where, CameraFrame frame)
+        {
+            var shot = view.Snapshot(end, where ?? new ImagePoint[0]);
+            if (current == null) return;
+            if (end == CableEnd.Device) { current.DeviceShot = shot; current.DeviceFrame = frame; }
+            else { current.ControllerShot = shot; current.ControllerFrame = frame; }
         }
 
         void SetReadMark(int i)
@@ -412,6 +495,15 @@ namespace InstallerAssistant.WizardOfOz
             var shown = Shown();
             var unsure = shown.FindAll(x => x.State == Mark.Check);
             string here = EndWord(atController ? CableEnd.Controller : CableEnd.Device);
+            if (shown.Count == 0)
+            {
+                // nothing read: the camera was not on the terminals, or the reader failed
+                Sheet("No wires found", "Point the camera at the " + (atController ? rule.Connector.Name + " block" : DeviceWord + "'s terminals") +
+                    " so they fill the middle of the screen, then read again.");
+                Btn(sheetButtons, "Read again", ButtonKind.Primary, () => clicked = "rescan");
+                Instruction("No wires found", Warn);
+                return;
+            }
             Sheet(unsure.Count > 0 ? "Check one wire" : shown.Count + " wires read",
                 unsure.Count > 0 ? "The camera is not sure about " + unsure[0].Name + ". Tap it to confirm or correct the colour."
                                  : "Save them as the " + here + " end of " + CableTitle + ", or tap a wire to correct it.");
@@ -529,8 +621,6 @@ namespace InstallerAssistant.WizardOfOz
 
         IEnumerator ControllerSecond()
         {
-            yield return Arrive(CableEnd.Controller, "End 2 of 2", "The label pairs this end with the " + DeviceWord + " end you saved.");
-            SetTitle(EndTitle(CableEnd.Controller), CableTitle + " · end 2 of 2");
             BuildSnapshot(CableEnd.Device);
             ShowSnapshot(true);
             yield return RunCheck(true);
@@ -540,15 +630,29 @@ namespace InstallerAssistant.WizardOfOz
         /// <summary>Back at the controller after the check at the reader found a fault: the same verdicts, now on the pins.</summary>
         IEnumerator ControllerFix()
         {
-            yield return Arrive(CableEnd.Controller, "Fix", "Scan the label to show the fix on this block.");
-            SetTitle(EndTitle(CableEnd.Controller), CableTitle + " · fix");
             BuildSnapshot(CableEnd.Device);
             ShowSnapshot(true);
+            yield return LocatePins();
             foreach (var m in marks) m.Set(Mark.Hidden, -1, null);
             foreach (var r in results) ApplyResult(r);
             DrawFixArrows();
             log.Add("fix_shown_at_controller");
             yield return ControllerResultsLoop();
+        }
+
+        /// <summary>Reads the controller only to find its pins, so the verdicts of the check can be shown on them.</summary>
+        IEnumerator LocatePins()
+        {
+            Sheet("Finding the pins", "Hold the phone still for a moment.");
+            var bar = ProgressLine(ReadingWhat());
+            Instruction("Hold steady", Accent);
+            ControllerReading rd = null;
+            var frame = view.Latest;
+            scanLine.gameObject.SetActive(true);
+            StartCoroutine(wires.ReadControllerEnd(rule, frame, r => rd = r));
+            yield return ProgressUntil(bar, () => rd != null, 2.2f);
+            scanLine.gameObject.SetActive(false);
+            AnchorMarks(CableEnd.Controller, rd.Positions, frame);
         }
 
         IEnumerator ControllerResultsLoop()
@@ -566,7 +670,8 @@ namespace InstallerAssistant.WizardOfOz
                 }
                 if (clicked == "recheck")
                 {
-                    world.Rewired = true;   // Wizard of Oz: the operator has re-wired the bench
+                    if (op != null) op.Rewired(record);   // Wizard of Oz: the bench now shows the fixed wiring
+                    view.ShowEnd(CableEnd.Controller);
                     log.Add("recheck");
                     yield return RunCheck(false);
                     continue;
@@ -580,7 +685,6 @@ namespace InstallerAssistant.WizardOfOz
             foreach (var a in arrows) a.Destroy();
             arrows.Clear();
             HighlightSnapshot(-1);
-            if (!first) SetView(L.controllerFixed, ControllerTexture(L.controllerFixed, null, true));
 
             Sheet(first ? "Checking the wiring" : "Checking again", "Comparing " + rule.Connector.Name + " with what you saved at the " + DeviceWord + ".");
             var readBar = ProgressLine(ReadingWhat());
@@ -591,15 +695,23 @@ namespace InstallerAssistant.WizardOfOz
 
             ControllerReading rd = null;
             Opinion[] ops = null;
+            var frame = view.Latest;
             scanLine.gameObject.SetActive(true);
-            StartCoroutine(wires.ReadControllerEnd(rule, r => rd = r));
+            StartCoroutine(wires.ReadControllerEnd(rule, frame, r => rd = r));
             if (useSecondOpinion)
             {
-                StartCoroutine(secondOpinion.Compare(record, o => ops = o));    // layer 3 runs in parallel, independently
+                // layer 3 runs in parallel and independently: it never sees layer 1's reading
+                StartCoroutine(secondOpinion.Compare(record, current.DeviceFrame, frame, o => ops = o));
                 StartCoroutine(ProgressUntil(aiBar, () => ops != null, 2.8f));
             }
             yield return ProgressUntil(readBar, () => rd != null, 2.2f);
             scanLine.gameObject.SetActive(false);
+            AnchorMarks(CableEnd.Controller, rd.Positions, frame);
+            TakeSnapshot(CableEnd.Controller, rd.Positions, frame);
+            // the store keeps the controller end as it is now (after a fix, the fixed wiring)
+            ctrlRecord = new ControllerRecord(cable.AtEnd(CableEnd.Controller), rule, (int[])rd.Colours.Clone(), (float[])rd.Confidence.Clone(),
+                new bool[rd.Colours.Length], DateTime.Now);
+            records.Save(ctrlRecord);
             check = RuleChecker.Check(record, rd);                               // layer 2: instant and exact
             yield return ProgressFor(rulesBar, 0.5f);
             if (useSecondOpinion) { while (ops == null) yield return null; }
@@ -661,11 +773,37 @@ namespace InstallerAssistant.WizardOfOz
             return list;
         }
 
+        /// <summary>
+        /// At the device end, true when every active fix can be done right here (wire colours carry no meaning, so a
+        /// swap among the cable's own wires is fixed where the installer stands; see FixAction).
+        /// </summary>
+        bool FixHere
+        {
+            get
+            {
+                if (atController) return false;
+                var fixes = ActiveFixes();
+                if (fixes.Count == 0) return false;
+                foreach (var f in fixes) if (!f.AtDeviceToo) return false;
+                return true;
+            }
+        }
+
         void DrawFixArrows()
         {
             foreach (var a in arrows) a.Destroy();
             arrows.Clear();
-            if (!atController) return;
+            if (!atController)
+            {
+                if (!FixHere) return;
+                foreach (var f in ActiveFixes())
+                {
+                    int i = rule.TerminalIndex(f.DeviceFrom), j = rule.TerminalIndex(f.DeviceTo);
+                    if (i < 0 || j < 0 || i == j || i >= marks.Count || j >= marks.Count) continue;
+                    arrows.Add(FixArrow.Build(markersRT, marks[i], marks[j], f.Kind == FixKind.Swap));
+                }
+                return;
+            }
             foreach (var f in ActiveFixes())
             {
                 if (f.FromPin == f.ToPin) continue;
@@ -756,18 +894,15 @@ namespace InstallerAssistant.WizardOfOz
 
         IEnumerator ReaderSecond()
         {
-            yield return Arrive(CableEnd.Device, "End 2 of 2", "The label pairs this end with the controller end you saved.");
-            SetTitle(EndTitle(CableEnd.Device), CableTitle + " · end 2 of 2");
             BuildSnapshot(CableEnd.Controller);
             ShowSnapshot(true);
             yield return ConfirmWires("Check the wiring");
 
-            record = new CableRecord(cable, rule, (int[])readColours.Clone(), (bool[])readEdited.Clone(), DateTime.Now);
+            record = new CableRecord(cable.AtEnd(CableEnd.Device), rule, (int[])readColours.Clone(), (bool[])readEdited.Clone(), DateTime.Now);
             records.Save(record);
-            world.Record = record;
             confirmedByYou += CountEdits();
             log.Add("reader_saved", "colours=" + string.Join(" ", Array.ConvertAll(readColours, WireColours.Name)));
-            yield return RunCheckAtReader();
+            yield return RunCheckAtReader(true);
 
             while (true)
             {
@@ -781,16 +916,40 @@ namespace InstallerAssistant.WizardOfOz
                     continue;
                 }
                 if (clicked == "fix") { needsFixAtController = true; yield break; }
+                if (clicked == "recheck_here")
+                {
+                    if (op != null) op.RewiredAtDevice();   // Wizard of Oz: the bench now shows the re-wired reader
+                    view.ShowEnd(CableEnd.Device);
+                    log.Add("recheck_at_reader");
+                    yield return RecheckReader();
+                    continue;
+                }
                 if (clicked == "finish") yield break;
             }
+        }
+
+        /// <summary>After a fix at the device end: read this end again and run the same check.</summary>
+        IEnumerator RecheckReader()
+        {
+            foreach (var a in arrows) a.Destroy();
+            arrows.Clear();
+            HighlightSnapshot(-1);
+            readColours = null; readConfidence = null; readEdited = null;   // a new reading of re-wired terminals
+            foreach (var m in marks) m.Set(Mark.Hidden, -1, null);
+            yield return ConfirmWires("Check again");
+            record = new CableRecord(cable.AtEnd(CableEnd.Device), rule, (int[])readColours.Clone(), (bool[])readEdited.Clone(), DateTime.Now);
+            records.Save(record);
+            confirmedByYou += CountEdits();
+            log.Add("reader_saved", "colours=" + string.Join(" ", Array.ConvertAll(readColours, WireColours.Name)) + "; after_fix=true");
+            yield return RunCheckAtReader(false);
         }
 
         int PinOfTerminal(int terminalIndex) { return rule.PinFor(rule.DeviceTerminals[terminalIndex].Id); }
 
         /// <summary>The same rule check and verdict table, run against the controller end saved earlier.</summary>
-        IEnumerator RunCheckAtReader()
+        IEnumerator RunCheckAtReader(bool first)
         {
-            Sheet("Checking the wiring", "Comparing the " + DeviceWord + " end with the controller end you saved.");
+            Sheet(first ? "Checking the wiring" : "Checking again", "Comparing the " + DeviceWord + " end with the controller end you saved.");
             var rulesBar = ProgressLine("Comparing with the controller end");
             var aiBar = useSecondOpinion ? ProgressLine("AI second opinion") : null;
             Instruction("Hold steady", Accent);
@@ -800,7 +959,7 @@ namespace InstallerAssistant.WizardOfOz
             Opinion[] ops = null;
             if (useSecondOpinion)
             {
-                StartCoroutine(secondOpinion.Compare(record, o => ops = o));
+                StartCoroutine(secondOpinion.Compare(record, current.DeviceFrame, current.ControllerFrame, o => ops = o));
                 StartCoroutine(ProgressUntil(aiBar, () => ops != null, 2.8f));
             }
             check = RuleChecker.Check(record, rd);
@@ -810,7 +969,8 @@ namespace InstallerAssistant.WizardOfOz
 
             results = VerdictCombiner.Evaluate(check, rd, ops, confidenceThreshold);
             ApplyReaderVerdicts();
-            NoteFirstFixes(true);
+            DrawFixArrows();
+            NoteFirstFixes(first);
         }
 
         /// <summary>Each reader terminal takes the verdict of the controller pin its wire must reach.</summary>
@@ -829,7 +989,12 @@ namespace InstallerAssistant.WizardOfOz
         {
             int wrong = Count(Verdict.Wrong), amber = Count(Verdict.Check);
             var fixes = ActiveFixes();
-            if (wrong > 0)
+            bool here = FixHere;
+            if (wrong > 0 && here)
+                Sheet(fixes.Count == 1 ? fixes[0].DeviceHeadline + " here" : fixes.Count + " fixes here",
+                      (fixes.Count == 1 ? fixes[0].DeviceText : "Tap a red wire for its fix.") +
+                      (fixes[0].TouchesPower ? " Do this with the power off." : "") + " No need to go back to the controller.");
+            else if (wrong > 0)
                 Sheet("Fix at the controller", (fixes.Count == 1 ? fixes[0].Text : fixes.Count + " fixes. Tap a red wire for its fix.") +
                       " The app shows where on the controller.");
             else if (amber > 0)
@@ -862,10 +1027,12 @@ namespace InstallerAssistant.WizardOfOz
                 Row(MarkOf(r.Verdict), m.Name, colour, WireColours.Name(colour), detail, dc, () => { if (!modalOpen) tapped = mm; });
             }
 
-            if (wrong > 0) Btn(sheetButtons, "Go to the controller", ButtonKind.Primary, () => clicked = "fix");
+            if (wrong > 0 && here) Btn(sheetButtons, "Rewired · check again", ButtonKind.Primary, () => clicked = "recheck_here");
+            else if (wrong > 0) Btn(sheetButtons, "Go to the controller", ButtonKind.Primary, () => clicked = "fix");
             else if (amber == 0) Btn(sheetButtons, "Finish", ButtonKind.Primary, () => clicked = "finish");
 
-            if (wrong > 0) Instruction("Wiring does not match the controller end", Bad);
+            if (wrong > 0 && here) Instruction("Fix it here, at the " + DeviceWord, Bad);
+            else if (wrong > 0) Instruction("Wiring does not match the controller end", Bad);
             else if (amber > 0) Instruction("Tap the amber wire", Warn);
             else Instruction("Both ends match", Ok);
         }
@@ -962,7 +1129,9 @@ namespace InstallerAssistant.WizardOfOz
             }
             if (f.Fix != null && (r.Verdict == Verdict.Wrong || (r.Verdict == Verdict.Check && !f.RulesOk)))
             {
-                Callout(md, BadSoft, Bad, atController ? "Fix" : "Fix at the controller", f.Fix.Text + (f.Fix.TouchesPower ? " Do this with the power off." : ""));
+                bool fixHere = !atController && FixHere && f.Fix.AtDeviceToo;
+                Callout(md, BadSoft, Bad, atController ? "Fix" : fixHere ? "Fix here" : "Fix at the controller",
+                    (fixHere ? f.Fix.DeviceText : f.Fix.Text) + (f.Fix.TouchesPower ? " Do this with the power off." : ""));
                 Txt(md, "<b>Why.</b> " + f.Fix.Why, Small, Ink2);
                 if (!string.IsNullOrEmpty(f.Fix.Symptom)) Txt(md, "<b>On the device.</b> " + f.Fix.Symptom, Small, Ink2);
             }
@@ -1006,8 +1175,9 @@ namespace InstallerAssistant.WizardOfOz
                     };
                 log.Add("amber_rejected", pin.Label);
             }
-            if (atController) { ApplyResult(r); DrawFixArrows(); }
+            if (atController) ApplyResult(r);
             else ApplyReaderVerdicts();
+            DrawFixArrows();
             HighlightSnapshot(-1);
             yield return CloseModal(md);
         }
@@ -1021,21 +1191,9 @@ namespace InstallerAssistant.WizardOfOz
             camRoot = UiKit.Rect("Check", screen);
             Stretch(camRoot);
 
-            // camera view (a photo here; the AR camera background in the app)
-            var bg = Img("Camera", camRoot, null, Hex("#111111"), 0);
-            Stretch(bg.rectTransform);
-            bg.gameObject.AddComponent<RectMask2D>();
-            mover = UiKit.Rect("Mover", bg.rectTransform);
-            Stretch(mover);
-            photo = new GameObject("Photo", typeof(RectTransform)).AddComponent<RawImage>();
-            photo.transform.SetParent(mover, false);
-            photo.raycastTarget = false;
-            photoRT = photo.rectTransform;
-            Stretch(photoRT);
-            photoFit = photo.gameObject.AddComponent<AspectRatioFitter>();
-            photoFit.aspectMode = AspectRatioFitter.AspectMode.EnvelopeParent;
-            markersRT = UiKit.Rect("Markers", photoRT);
-            Stretch(markersRT);
+            // the camera view (a photo in the Wizard of Oz, the AR camera live) and the layer anchored on it
+            markersRT = view.Attach(camRoot);
+            if (view.SeeThrough) canvasBackground.enabled = false;   // the AR camera is drawn behind the UI
 
             var top = Img("TopShade", camRoot, sFadeDown, Hex("#000000", 0.35f), 0);
             Place(top.rectTransform, new Vector2(0.5f, 1), new Vector2(0, -220), new Vector2(4000, 440));
@@ -1078,14 +1236,14 @@ namespace InstallerAssistant.WizardOfOz
             instructionGroup = ins.gameObject.AddComponent<CanvasGroup>();
             instructionGroup.alpha = 0;
 
-            // label detection frame and missing-label guide (anchored on the photo)
+            // label detection frame and missing-label guide (anchored in the camera view)
             qrBox = UiKit.Rect("LabelBox", markersRT);
             qrBox.sizeDelta = new Vector2(300, 300);
-            Corners(qrBox, Surface, 64 * L.markerScale, 8 * L.markerScale);
+            Corners(qrBox, Surface, 64 * style.markerScale, 8 * style.markerScale);
             var qrLbl = Pill(qrBox, "LabelText", new Vector2(0.5f, 1), new Vector2(0, 54), new Vector2(0.5f, 0.5f), Surface);
-            qrLbl.localScale = Vector3.one * L.labelTextScale;
+            qrLbl.localScale = Vector3.one * style.labelTextScale;
             Fixed(Img("Dot", qrLbl, sCircle, Ok, 0).rectTransform, 18, 18);
-            qrCaption = Txt(qrLbl, cable.Display, Caption, Ink, Face.Semi);
+            qrCaption = Txt(qrLbl, cable != null ? cable.Display : "", Caption, Ink, Face.Semi);
             qrBox.gameObject.SetActive(false);
 
             missingGuide = UiKit.Rect("MissingLabel", markersRT);
@@ -1093,7 +1251,7 @@ namespace InstallerAssistant.WizardOfOz
             missingGuide.gameObject.AddComponent<CanvasGroup>();
             Dashed(missingGuide, 330, 300, Warn);
             var mg = Pill(missingGuide, "MissingText", new Vector2(0.5f, 0), new Vector2(0, -64), new Vector2(0.5f, 0.5f), WarnSoft);
-            mg.localScale = Vector3.one * (L.labelTextScale / L.markerScale);
+            mg.localScale = Vector3.one * (style.labelTextScale / style.markerScale);
             Txt(mg, "Attach the label here", Small, WarnInk, Face.Semi);
             missingGuide.gameObject.SetActive(false);
 
@@ -1174,7 +1332,7 @@ namespace InstallerAssistant.WizardOfOz
         /// <summary>Eases to 90 % over the expected time and completes only when the work is done.</summary>
         IEnumerator ProgressUntil(Image bar, Func<bool> done, float expectedSeconds)
         {
-            float t = 0, dur = expectedSeconds / Mathf.Max(0.1f, speed);
+            float t = 0, dur = expectedSeconds;
             while (!done())
             {
                 if (bar != null) bar.fillAmount = 0.9f * Ease(t / dur);
@@ -1260,30 +1418,25 @@ namespace InstallerAssistant.WizardOfOz
         string HelpText()
         {
             if (results != null) return "Red: fix it as shown. Amber: tap and decide. Green: correct.";
+            if (cable == null) return "Point the phone at the cable label.";
             if (atController) return "Point the phone at the " + rule.Connector.Name + " block and the cable label.";
             return "Point the phone at the " + DeviceWord + "'s terminals and the cable label.";
         }
 
-        string LabelWord() { return L.handwrittenLabels ? "cable label" : "QR label"; }
-        static string OpinionWord(Opinion o) { return o == Opinion.Match ? "match" : o == Opinion.Mismatch ? "mismatch" : "no answer"; }
 
-        void ShowQr(Vector2 pos)
-        {
-            qrBox.anchorMin = qrBox.anchorMax = new Vector2(pos.x, 1f - pos.y);
-            qrBox.anchoredPosition = Vector2.zero;
-            var caption = (RectTransform)qrBox.Find("LabelText");
-            float edge = pos.x > 0.65f ? 1f : pos.x < 0.35f ? 0f : 0.5f;
-            caption.anchorMin = caption.anchorMax = new Vector2(edge, 1);
-            caption.pivot = new Vector2(edge, 0.5f);
-            qrBox.gameObject.SetActive(true);
-        }
+        string LabelWord() { return style.handwrittenLabels ? "cable label" : "QR label"; }
+        static string OpinionWord(Opinion o) { return o == Opinion.Match ? "match" : o == Opinion.Mismatch ? "mismatch" : "no answer"; }
 
         void ShowMissingGuide(bool on)
         {
-            Vector2 pos = view.labelPos;
-            missingGuide.anchorMin = missingGuide.anchorMax = new Vector2(pos.x, 1f - pos.y);
-            missingGuide.anchoredPosition = Vector2.zero;
+            PlaceAt(missingGuide, view.LabelHint);
             missingGuide.gameObject.SetActive(on);
+        }
+
+        static void PlaceAt(RectTransform rt, Vector2 pos)
+        {
+            rt.anchorMin = rt.anchorMax = new Vector2(pos.x, 1f - pos.y);
+            rt.anchoredPosition = Vector2.zero;
         }
 
         IEnumerator Shutter()
@@ -1379,27 +1532,23 @@ namespace InstallerAssistant.WizardOfOz
             while ((clicked == null || clicked == "dismiss") && tapped == null) yield return null;
         }
 
-        // ================================================================== markers and photos
+        // ================================================================== markers
 
-        void BuildReaderMarks()
+        /// <summary>One marker per device terminal (id = terminal index) or per controller pin (id = pin number).</summary>
+        void BuildMarks(CableEnd end)
         {
             ClearMarks();
-            for (int i = 0; i < rule.DeviceTerminals.Length; i++)
+            marksEnd = end;
+            int n = end == CableEnd.Controller ? rule.Connector.Count : rule.DeviceTerminals.Length;
+            for (int i = 0; i < n; i++)
             {
-                int id = i;
-                marks.Add(PinMarker.Build(markersRT, id, rule.DeviceTerminals[i].Print, Get(L.reader.points, i, new Vector2(0.4f + 0.06f * i, 0.42f)),
-                    L.markerScale, L.labelTextScale, () => { if (!modalOpen && !calibrating) tapped = marks[id]; }));
-            }
-        }
-
-        void BuildControllerMarks()
-        {
-            ClearMarks();
-            for (int p = 1; p <= rule.Connector.Count; p++)
-            {
-                int idx = p - 1;
-                marks.Add(PinMarker.Build(markersRT, p, rule.Connector.Pin(p).Print, Get(view.points, idx, new Vector2(0.3f + 0.05f * idx, 0.45f)),
-                    L.markerScale, L.labelTextScale, () => { if (!modalOpen && !calibrating) tapped = marks[idx]; }));
+                int idx = i;
+                int id = end == CableEnd.Controller ? i + 1 : i;
+                string name = end == CableEnd.Controller ? rule.Connector.Pin(i + 1).Print : rule.DeviceTerminals[i].Print;
+                Vector2 pos;
+                if (!view.TryGetPosition(CameraKeys.Of(end, i), out pos)) pos = new Vector2(0.5f, 0.5f);
+                marks.Add(PinMarker.Build(markersRT, id, name, pos, style.markerScale, style.labelTextScale,
+                    () => { if (!modalOpen) tapped = marks[idx]; }));
             }
         }
 
@@ -1454,96 +1603,76 @@ namespace InstallerAssistant.WizardOfOz
             return outList;
         }
 
-        Texture2D ReaderTexture()
+        // ------------------------------------------------------------------ snapshot panel (linked views)
+
+        static UnityEngine.Rect CropRect(Vector2[] pts, Texture2D tex)
         {
-            if (L.reader.photo != null) return L.reader.photo;
-            Texture2D t;
-            if (!mockCache.TryGetValue(L.reader, out t))
-            {
-                var c = new Color[4];
-                for (int i = 0; i < 4; i++) c[i] = Wire[Mathf.Clamp(Get(L.readerColours, i, i), 0, Wire.Length - 1)];
-                t = MockPhotos.Reader(c);
-                mockCache[L.reader] = t;
-            }
-            return t;
+            if (pts == null || pts.Length == 0 || tex == null) return new UnityEngine.Rect(0, 0, 1, 1);
+            float x0 = 1, x1 = 0, y0 = 1, y1 = 0;
+            foreach (var p in pts) { x0 = Mathf.Min(x0, p.x); x1 = Mathf.Max(x1, p.x); y0 = Mathf.Min(y0, p.y); y1 = Mathf.Max(y1, p.y); }
+            float cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+            float aspect = tex.width / (float)tex.height;
+            float w = Mathf.Max(x1 - x0 + 0.22f, 0.3f);
+            float hgt = w * aspect * 3f / 4f;
+            hgt = Mathf.Max(hgt, y1 - y0 + 0.12f);
+            w = hgt / aspect * 4f / 3f;
+            w = Mathf.Min(w, 1f); hgt = Mathf.Min(hgt, 1f);
+            float u0 = Mathf.Clamp(cx - w / 2, 0, 1 - w), v0 = Mathf.Clamp(cy - hgt / 2, 0, 1 - hgt);
+            return new UnityEngine.Rect(u0, 1f - v0 - hgt, w, hgt);
         }
 
-        /// <summary>Photo of a controller view; with no photo, a mock showing pinColours (null = correctly wired).</summary>
-        Texture2D ControllerTexture(DemoLayout.PhotoView v, int[] pinColours, bool withLabel)
-        {
-            if (v.photo != null) return v.photo;
-            Texture2D t;
-            if (mockCache.TryGetValue(v, out t)) return t;
-            var c = new Color[8];
-            for (int p = 1; p <= 8; p++)
-            {
-                int colour = pinColours != null ? Get(pinColours, p - 1, -1)
-                    : rule.TerminalFor(p) != null ? Get(L.readerColours, rule.TerminalIndex(rule.TerminalFor(p)), -1) : -1;
-                c[p - 1] = colour >= 0 ? Wire[Mathf.Clamp(colour, 0, Wire.Length - 1)] : new Color(0, 0, 0, 0);
-            }
-            t = MockPhotos.Controller(c, withLabel);
-            mockCache[v] = t;
-            return t;
-        }
-
-        void SetView(DemoLayout.PhotoView v, Texture2D tex)
-        {
-            view = v;
-            photo.texture = tex;
-            photoFit.aspectRatio = tex.width / (float)tex.height;
-            if (atController)
-                foreach (var m in marks) m.MoveTo(Get(v.points, m.Id - 1, m.Pos));
-        }
-
-        Vector2[] UsedPins(Vector2[] pins)
+        static Vector2[] UsedPins(Vector2[] pins, UsageRule r)
         {
             var list = new List<Vector2>();
-            foreach (var p in rule.Pairs) if (pins != null && p.ControllerPin - 1 < pins.Length) list.Add(pins[p.ControllerPin - 1]);
+            foreach (var p in r.Pairs) if (pins != null && p.ControllerPin - 1 < pins.Length) list.Add(pins[p.ControllerPin - 1]);
             return list.Count > 0 ? list.ToArray() : pins;
         }
 
-        float Zoom() { return mover != null ? mover.localScale.x : 1f; }
-
         void UpdateCheck()
         {
-            if (mover == null || view == null) return;
+            if (camRoot == null || view == null) return;
+            view.Tick();
             float t = Time.unscaledTime;
-            // A camera feed always fills the screen: never scale the photo below the screen
-            // (that showed the dark background as a border) and never pan past its edges.
-            Vector2 pan = new Vector2(Mathf.Clamp(view.pan.x, -0.4f, 0.4f), Mathf.Clamp(view.pan.y, -0.4f, 0.4f));
-            float cover = Mathf.Max(1f / (1f - 2f * Mathf.Abs(pan.x)), 1f / (1f - 2f * Mathf.Abs(pan.y)));
-            float s = Mathf.Max(view.zoom, cover) * (calibrating ? 1f : 1.02f);
-            Vector2 size = photoRT.rect.size;
-            Vector2 sway = calibrating ? Vector2.zero
-                : new Vector2(Mathf.PerlinNoise(t * 0.35f, 1.3f) - 0.5f, Mathf.PerlinNoise(2.1f, t * 0.3f) - 0.5f) * 18f;
-            Vector2 room = (s - 1f) * 0.5f * size - Vector2.one * 9f;   // keep 9 px for the hand sway
-            Vector2 off = new Vector2(-pan.x * size.x * s, pan.y * size.y * s);
-            off.x = Mathf.Clamp(off.x, -Mathf.Max(0f, room.x), Mathf.Max(0f, room.x));
-            off.y = Mathf.Clamp(off.y, -Mathf.Max(0f, room.y), Mathf.Max(0f, room.y));
-            mover.localScale = new Vector3(s, s, 1f);
-            mover.anchoredPosition = off + sway;
+            float inv = view.MarkerScale;
 
-            float inv = 1f / Zoom();
-            foreach (var m in marks) m.Animate(t, inv);
+            // every marker sits where the view says its terminal is now; unknown or out of view = hidden
+            for (int k = 0; k < marks.Count; k++)
+            {
+                var m = marks[k];
+                Vector2 p;
+                bool known = view.TryGetPosition(CameraKeys.Of(marksEnd, k), out p);
+                if (known) m.MoveTo(p);
+                bool show = known && m.State != Mark.Hidden;
+                if (m.Root.gameObject.activeSelf != show) m.Root.gameObject.SetActive(show);
+                m.Animate(t, inv);
+            }
             foreach (var a in arrows) a.Update(markersRT, -tagSide, t, inv);
 
             if (scanLine != null && scanLine.gameObject.activeSelf)
             {
                 float h = canvasRT.rect.height;
-                float k = Mathf.Repeat(t * 0.55f * speed, 1f);
+                float k = Mathf.Repeat(t * 0.55f, 1f);
                 scanLine.anchoredPosition = new Vector2(0, -h * (0.14f + 0.5f * k));
                 scanLine.GetComponent<CanvasGroup>().alpha = Mathf.Sin(k * Mathf.PI);
             }
-            if (qrBox != null && qrBox.gameObject.activeSelf)
+            if (qrBox != null)
             {
-                Vector2 frame = view.labelSize;
-                qrBox.sizeDelta = frame.x > 0 && frame.y > 0 ? Vector2.Scale(frame, photoRT.rect.size) * Zoom() : new Vector2(300, 300);
-                float p = 1f + 0.03f * Mathf.Sin(t * 5f);
-                qrBox.localScale = new Vector3(p / Zoom(), p / Zoom(), 1f);
+                Vector2 lp;
+                bool known = labelBoxOn && view.TryGetPosition(CameraKeys.Label, out lp);
+                if (qrBox.gameObject.activeSelf != known) qrBox.gameObject.SetActive(known);
+                if (known && view.TryGetPosition(CameraKeys.Label, out lp))
+                {
+                    PlaceAt(qrBox, lp);
+                    // the frame covers the label; its corner strokes keep their size on screen
+                    qrBox.sizeDelta = labelExtent.x > 0 && labelExtent.y > 0 ? Vector2.Scale(labelExtent, markersRT.rect.size) / inv : new Vector2(300, 300);
+                    float pulse = 1f + 0.03f * Mathf.Sin(t * 5f);
+                    qrBox.localScale = new Vector3(pulse * inv, pulse * inv, 1f);
+                }
             }
             if (missingGuide != null && missingGuide.gameObject.activeSelf)
             {
-                missingGuide.localScale = Vector3.one * (L.markerScale / Zoom());
+                PlaceAt(missingGuide, view.LabelHint);
+                missingGuide.localScale = Vector3.one * (style.markerScale * inv);
                 missingGuide.GetComponent<CanvasGroup>().alpha = 0.65f + 0.35f * Mathf.Sin(t * 4f);
             }
             foreach (var ring in pulseRings)
@@ -1559,16 +1688,16 @@ namespace InstallerAssistant.WizardOfOz
         void LateUpdateCheck()
         {
             if (canvasRT != null && markersRT != null && marks.Count > 0)
-                tagSide = TagLayout.Apply(marks, canvasRT, FreeArea(), !atController && L.readerTagsBelowTerminals, L.markerScale, L.labelTextScale);
+                tagSide = TagLayout.Apply(marks, canvasRT, FreeArea(), !atController && style.tagsBelowTerminals, style.markerScale, style.labelTextScale);
         }
 
         /// <summary>
         /// The part of the camera view that nothing covers: below the top controls and above the bottom sheet,
         /// with a margin at the sides. Tags are kept inside it, whatever the phone's aspect ratio.
         /// </summary>
-        Rect FreeArea()
+        UnityEngine.Rect FreeArea()
         {
-            Rect r = canvasRT.rect;
+            UnityEngine.Rect r = canvasRT.rect;
             float top = r.yMax - SafeTop() - 290f;
             float bottom = r.yMin + (sheet != null && sheet.gameObject.activeSelf ? sheet.rect.height + 20f : 40f);
             if (top - bottom < 200f) bottom = top - 200f;
@@ -1577,23 +1706,7 @@ namespace InstallerAssistant.WizardOfOz
 
         // ------------------------------------------------------------------ snapshot panel (linked views)
 
-        Rect CropRect(Vector2[] pts, Texture2D tex)
-        {
-            if (pts == null || pts.Length == 0) return new Rect(0, 0, 1, 1);
-            float x0 = 1, x1 = 0, y0 = 1, y1 = 0;
-            foreach (var p in pts) { x0 = Mathf.Min(x0, p.x); x1 = Mathf.Max(x1, p.x); y0 = Mathf.Min(y0, p.y); y1 = Mathf.Max(y1, p.y); }
-            float cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-            float aspect = tex.width / (float)tex.height;
-            float w = Mathf.Max(x1 - x0 + 0.22f, 0.3f);
-            float hgt = w * aspect * 3f / 4f;
-            hgt = Mathf.Max(hgt, y1 - y0 + 0.12f);
-            w = hgt / aspect * 4f / 3f;
-            w = Mathf.Min(w, 1f); hgt = Mathf.Min(hgt, 1f);
-            float u0 = Mathf.Clamp(cx - w / 2, 0, 1 - w), v0 = Mathf.Clamp(cy - hgt / 2, 0, 1 - hgt);
-            return new Rect(u0, 1f - v0 - hgt, w, hgt);
-        }
-
-        /// <summary>The small live-linked view of the other end, top corner of the camera view. Tap to enlarge.</summary>
+        /// <summary>The small view of the other end, top corner of the camera view. Tap to enlarge.</summary>
         void BuildSnapshot(CableEnd of)
         {
             if (snapshot != null) Destroy(snapshot.parent.gameObject);
@@ -1602,9 +1715,9 @@ namespace InstallerAssistant.WizardOfOz
             ApplySafeArea(safe);
             safe.SetSiblingIndex(sheet.GetSiblingIndex());
             snapshot = UiKit.Rect("Snapshot", safe);
-            snapshot.anchorMin = snapshot.anchorMax = new Vector2(L.snapshotOnLeft ? 0 : 1, 1);
+            snapshot.anchorMin = snapshot.anchorMax = new Vector2(style.snapshotOnLeft ? 0 : 1, 1);
             snapshot.pivot = snapshot.anchorMax;
-            snapshot.anchoredPosition = new Vector2(L.snapshotOnLeft ? L.snapshotInset : -L.snapshotInset, -L.snapshotTopInset);
+            snapshot.anchoredPosition = new Vector2(style.snapshotOnLeft ? style.snapshotInset : -style.snapshotInset, -style.snapshotTopInset);
             snapshot.sizeDelta = new Vector2(360, 320);
             snapshotExpanded = false;
             snapshotGroup = snapshot.gameObject.AddComponent<CanvasGroup>();
@@ -1626,7 +1739,7 @@ namespace InstallerAssistant.WizardOfOz
         }
 
         /// <summary>
-        /// A crop of one end's photo with a dot per wire. Device end: one dot per terminal (id = terminal index).
+        /// A crop of one end's snapshot with a dot per wire. Device end: one dot per terminal (id = terminal index).
         /// Controller end: one dot per pin that holds a wire in the saved record (id = pin number).
         /// </summary>
         void BuildCrop(RectTransform holder, CableEnd of, int highlight, Dictionary<int, RectTransform> dotsOut)
@@ -1635,29 +1748,33 @@ namespace InstallerAssistant.WizardOfOz
             var round = Img("Back", holder, sRound, Hex("#111111"), 20);
             Stretch(round.rectTransform);
 
-            Texture2D tex;
+            var shot = current == null ? null : of == CableEnd.Device ? current.DeviceShot : current.ControllerShot;
+            if (shot == null || shot.Image == null)
+            {
+                var none = Txt(holder, "No image of the " + EndWord(of) + " end", Small, Hex("#D1D5DB"), Face.Regular, TextAlignmentOptions.Center);
+                Stretch(none.rectTransform, 24, 0, 24, 0);
+                return;
+            }
+            Texture2D tex = shot.Image;
             var ids = new List<int>(); var pos = new List<Vector2>(); var names = new List<string>(); var colours = new List<int>();
             if (of == CableEnd.Device)
             {
-                tex = ReaderTexture();
                 for (int i = 0; i < rule.DeviceTerminals.Length; i++)
                 {
                     ids.Add(i);
-                    pos.Add(Get(L.reader.points, i, Vector2.one * 0.5f));
+                    pos.Add(Get(shot.Points, i, Vector2.one * 0.5f));
                     names.Add(rule.DeviceTerminals[i].Print);
-                    colours.Add(record != null ? record.Colours[i] : readColours != null && !atController && i < readColours.Length ? readColours[i] : i);
+                    colours.Add(record != null ? record.Colours[i] : WireColours.None);
                 }
             }
             else
             {
-                var v = Scenario.wiring;
-                tex = ControllerTexture(v, Scenario.pinColours, true);
                 for (int p = 1; p <= rule.Connector.Count; p++)
                 {
-                    int c = ctrlRecord != null ? ctrlRecord.PinColours[p - 1] : Get(Scenario.pinColours, p - 1, WireColours.None);
+                    int c = ctrlRecord != null ? ctrlRecord.PinColours[p - 1] : WireColours.None;
                     if (c == WireColours.None) continue;
                     ids.Add(p);
-                    pos.Add(Get(v.points, p - 1, Vector2.one * 0.5f));
+                    pos.Add(Get(shot.Points, p - 1, Vector2.one * 0.5f));
                     names.Add(rule.Connector.Pin(p).Print);
                     colours.Add(c);
                 }
@@ -1681,7 +1798,7 @@ namespace InstallerAssistant.WizardOfOz
                 var dot = UiKit.Rect("Dot " + names[k], root);
                 dot.anchorMin = dot.anchorMax = new Vector2(u, vv);
                 Img("Ring", dot, sCircle, Surface, 0).rectTransform.sizeDelta = new Vector2(30, 30);
-                Img("Sw", dot, sCircle, Wire[Mathf.Clamp(colours[k], 0, Wire.Length - 1)], 0).rectTransform.sizeDelta = new Vector2(22, 22);
+                Img("Sw", dot, sCircle, colours[k] < 0 ? Ink3 : Wire[Mathf.Clamp(colours[k], 0, Wire.Length - 1)], 0).rectTransform.sizeDelta = new Vector2(22, 22);
                 var tag = Img("Tag", dot, sRound, Surface, 14);
                 Place(tag.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0, -36), new Vector2(names[k].Length > 2 ? 64 : 46, 32));
                 var nm = Txt(tag.rectTransform, names[k], 22, Ink, Face.Semi, TextAlignmentOptions.Center);
@@ -1698,6 +1815,7 @@ namespace InstallerAssistant.WizardOfOz
 
         void ShowSnapshot(bool on)
         {
+            if (snapshot == null) return;
             snapshot.gameObject.SetActive(on);
             if (on) { StartCoroutine(Fade(snapshotGroup, 0, 1, 0.3f)); StartCoroutine(Pop(snapshot)); }
         }
@@ -1705,10 +1823,10 @@ namespace InstallerAssistant.WizardOfOz
         void ToggleSnapshot()
         {
             snapshotExpanded = !snapshotExpanded;
-            float inset = snapshotExpanded ? Gutter : L.snapshotInset;
+            float inset = snapshotExpanded ? Gutter : style.snapshotInset;
             log.Add("snapshot_" + (snapshotExpanded ? "open" : "close"));
             StartCoroutine(ResizeSnapshot(snapshotExpanded ? new Vector2(984, 820) : new Vector2(360, 320),
-                new Vector2(L.snapshotOnLeft ? inset : -inset, snapshotExpanded ? -300 : -L.snapshotTopInset)));
+                new Vector2(style.snapshotOnLeft ? inset : -inset, snapshotExpanded ? -300 : -style.snapshotTopInset)));
         }
 
         IEnumerator ResizeSnapshot(Vector2 size, Vector2 pos)
@@ -1733,82 +1851,6 @@ namespace InstallerAssistant.WizardOfOz
             snapshotHighlight.SetParent(dot, false);
             snapshotHighlight.anchoredPosition = Vector2.zero;
             snapshotHighlight.gameObject.SetActive(true);
-        }
-
-        // ------------------------------------------------------------------ calibration (operator)
-
-        int CalibCount { get { return atController ? 3 : 1 + rule.DeviceTerminals.Length; } }
-
-        void ToggleCalibration()
-        {
-            if (photo == null || photo.texture == null || view == null) return;
-            calibrating = !calibrating;
-            calibStep = 0;
-            calibGroup.gameObject.SetActive(calibrating);
-            calibGroup.transform.SetAsLastSibling();
-            if (calibrating)
-            {
-                hiddenBeforeCalibration.Clear();
-                foreach (var m in marks)
-                    if (m.State == Mark.Hidden) { hiddenBeforeCalibration.Add(m); m.Set(Mark.Correct, -1, m.Name); }
-            }
-            else
-            {
-                foreach (var m in hiddenBeforeCalibration) m.Set(Mark.Hidden, -1, null);
-                hiddenBeforeCalibration.Clear();
-            }
-            UpdateCalibText();
-        }
-
-        void UpdateCalibText()
-        {
-            string what = calibStep == 0 ? "the cable LABEL"
-                : atController ? (calibStep == 1 ? "pin 1 (" + rule.Connector.Pin(1).Print + ")" : "pin " + rule.Connector.Count + " (" + rule.Connector.Pin(rule.Connector.Count).Print + ")")
-                : "terminal " + rule.DeviceTerminals[calibStep - 1].Print;
-            calibText.text = (atController ? "Controller" : "Reader") + " · click " + what + "  (" + (calibStep + 1) + "/" + CalibCount + ") · Esc to stop";
-        }
-
-        void OnCalibrationClick(PointerEventData e)
-        {
-            if (!calibrating) return;
-            Vector2 local;
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(photoRT, e.position, null, out local)) return;
-            Rect r = photoRT.rect;
-            var p = new Vector2(Mathf.Clamp01((local.x - r.xMin) / r.width), Mathf.Clamp01(1f - (local.y - r.yMin) / r.height));
-            if (calibStep == 0) { view.labelPos = p; ShowQr(p); }
-            else if (!atController)
-            {
-                int i = calibStep - 1;
-                if (view.points == null || view.points.Length < rule.DeviceTerminals.Length)
-                {
-                    var n = new Vector2[rule.DeviceTerminals.Length];
-                    if (view.points != null) Array.Copy(view.points, n, view.points.Length);
-                    view.points = n;
-                }
-                view.points[i] = p;
-                marks[i].MoveTo(p);
-            }
-            else if (calibStep == 1) calibPin1 = p;
-            else
-            {
-                view.points = DemoLayout.Interpolate(calibPin1, p);
-                foreach (var m in marks) m.MoveTo(view.points[m.Id - 1]);
-            }
-#if UNITY_EDITOR
-            if (layout != null) EditorUtility.SetDirty(layout);
-#endif
-            calibStep++;
-            if (calibStep >= CalibCount)
-            {
-                ToggleCalibration();
-                qrBox.gameObject.SetActive(false);
-                Toast(layout != null ? "Positions saved to " + layout.name : "Positions set (assign a DemoLayout asset to keep them)");
-#if UNITY_EDITOR
-                if (layout != null) AssetDatabase.SaveAssets();
-#endif
-                return;
-            }
-            UpdateCalibText();
         }
     }
 }

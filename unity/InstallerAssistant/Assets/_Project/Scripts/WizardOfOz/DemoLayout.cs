@@ -60,6 +60,11 @@ namespace InstallerAssistant.WizardOfOz
         {
             new Vector2(0.4000f, 0.420f), new Vector2(0.4667f, 0.420f), new Vector2(0.5333f, 0.420f), new Vector2(0.6000f, 0.420f)
         }, new Vector2(0.5f, 0.701f));
+        [Tooltip("Photo of the reader after the installer fixed the wiring there (a swap among its own wires). Empty = a drawn image.")]
+        public PhotoView readerFixed = new PhotoView(new[]
+        {
+            new Vector2(0.4000f, 0.420f), new Vector2(0.4667f, 0.420f), new Vector2(0.5333f, 0.420f), new Vector2(0.6000f, 0.420f)
+        }, new Vector2(0.5f, 0.701f));
         [Tooltip("Colour on the reader terminals +, -, A, B. 0 Red, 1 Black, 2 Green, 3 Yellow, 4 White, 5 Brown, 6 Blue, 7 Orange.")]
         public int[] readerColours = { 0, 1, 2, 3 };
         [Tooltip("Reader terminal (0 = +, 1 = -, 2 = A, 3 = B) the AI is unsure about on the first read. -1 = none.")]
