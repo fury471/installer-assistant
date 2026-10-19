@@ -8,7 +8,7 @@ An image is `{"width", "height", "format": "jpeg", "data_b64", "intrinsics": [fx
 
 ## GET /health
 
-`{"status": "ok", "model": "dummy-correct"}`
+`{"status": "ok", "model": "classical-0"}` (or `dummy-correct` when started with `IA_READER=dummy`)
 
 ## POST /read
 

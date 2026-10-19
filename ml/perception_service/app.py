@@ -3,7 +3,8 @@
 Run from the repository root:
     python -m pip install -r ml/requirements.txt
     python -m uvicorn ml.perception_service.app:app --host 0.0.0.0 --port 8000
-Reader: environment variable IA_READER = dummy (default) | dummy-unknown | classical.
+Reader: environment variable IA_READER = classical (default) | dummy | dummy-unknown.
+The dummy readers give the same answer for every photo: for testing the plumbing only, never for a demo.
 """
 import os
 import time
@@ -15,7 +16,7 @@ from .readers import get_reader
 from .schemas import CompareRequest, CompareResponse, ReadItem, ReadRequest, ReadResponse
 
 app = FastAPI(title="Installer Assistant perception service", version="0.1")
-reader = get_reader(os.environ.get("IA_READER", "dummy"))
+reader = get_reader(os.environ.get("IA_READER", "classical"))
 
 
 @app.get("/health")

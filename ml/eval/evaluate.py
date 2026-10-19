@@ -13,7 +13,7 @@ Annotations (data/annotations/*.json, one file per photo; photos stay on the sha
   ]
 }
 
-    python -m ml.eval.evaluate --data data --reader dummy --threshold 0.8 --out ml/runs/eval.json
+    python -m ml.eval.evaluate --data data --reader classical --threshold 0.8 --out ml/runs/eval.json
 """
 import argparse
 import base64
@@ -39,7 +39,7 @@ def load(path: str) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="data")
-    ap.add_argument("--reader", default="dummy")
+    ap.add_argument("--reader", default="classical")
     ap.add_argument("--threshold", type=float, default=0.8)
     ap.add_argument("--out", default="ml/runs/eval.json")
     a = ap.parse_args()

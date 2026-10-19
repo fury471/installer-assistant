@@ -2,7 +2,7 @@
 
 Yu (package A) · first written 17 Oct 2026, updated 18 Oct 2026. Source for the course report: every design decision here has a reason the report can cite. Change it through a pull request like any other file.
 
-The MVP verifies one cable end to end: an AXIS A4020-E reader wired to Reader 1 of an AXIS A1610 door controller. It catches two faults taken from the Axis documentation and shows each fix where the installer's hands are. The app (`Scenes/App.unity`) running in Wizard-of-Oz mode is the blueprint. Its flow, screens, wiring rules, fix logic and verdicts are the app's real code; only the sensing services (camera view, label scanner, wire reader, second opinion) are scripted.
+The MVP verifies one cable end to end: an AXIS A4020-E reader wired to port READER 1 of an AXIS A1610 door controller. In live mode it checks **any wiring** of that cable, as the installer actually made it: the first end's record and the A1610 pin table define what is correct, not a list of known faults, so every swap, move, missing or extra wire is found and its fix shown where the installer's hands are. The Wizard-of-Oz mode demonstrates how the product looks and feels with two planted faults; it is the blueprint for the interaction and the study's fallback, not the limit of the product. Its flow, screens, wiring rules, fix logic and verdicts are the app's real code; only the sensing services (camera view, label scanner, wire reader, second opinion) are scripted, and only in that mode.
 
 ## Goal and research question
 
@@ -14,11 +14,12 @@ Installers wire field devices to the A1610 and leave. Wiring mistakes surface la
 
 ## MVP scope
 
-The MVP is the smallest product that can answer the research question on the lent kit (Ries, 2011): one usage, one cable, two faults, every step of the check.
+The MVP is the smallest product that can answer the research question on the lent kit (Ries, 2011): one usage and one cable, any wiring of it, every step of the check.
 
 | Area | In the MVP | Later |
 | --- | --- | --- |
-| Usage | OSDP reader on Reader 1, controller-powered | Reader 2, Wiegand readers, door monitor (Door 1, IO5/IO6), lock relays |
+| Usage | OSDP reader on port READER 1, controller-powered | Port READER 2, Wiegand readers, door monitor (Door 1, IO5/IO6), lock relays |
+| Faults found (live) | Any difference between the two ends: swaps, moves, rotations, missing, extra or wrong-pin wires; unclear pins go amber | Faults the camera cannot see (a loose screw, a broken core) |
 | Cable identity | Label scanned at both ends; check blocked without it | App-generated labels |
 | Reader end | AI reads 4 terminals; installer confirms, edits or rescans | — |
 | Controller end | All 8 pins of Reader 1 read; rules + independent AI second opinion | Several blocks in one view |
@@ -26,7 +27,9 @@ The MVP is the smallest product that can answer the research question on the len
 | Record | Session log (CSV) and both snapshots | Report export to the customer's system |
 | Device status | Physical symptom named in the fix card | Reading reader status from the A1610 |
 
-**Fault cases chosen from the documents**
+**Demonstration faults (Wizard of Oz and study tasks)**
+
+The live check does not depend on these; they are the scenarios the Wizard-of-Oz mode stages, chosen from the Axis documents because each one shows a different part of the check.
 
 1. **RS485 A and B swapped.** Green and yellow sit on each other's pin. The A4020-E wiring table requires reader A to controller A and reader B to controller B. A swapped pair cannot communicate, so the reader keeps flashing red ("waiting for controller connection"). It shows as two wrong colours on adjacent pins. Real photos exist.
 2. **Data wire on the wrong B pin.** Yellow sits on pin 6 (`B / O2`) instead of pin 4 (`B / D1`). The A1610 board prints A and B twice, but OSDP uses half-duplex RS485 on pins 3–4 only; pins 5–6 are for full-duplex TX or Wiegand outputs. This is a trap the board itself sets, and it tests the move-to-pin fix and the "pin must stay empty" rule.
@@ -94,6 +97,8 @@ The check cannot start without the label, because the label is the only thing th
 ## Architecture
 
 The app is layered so that going live means replacing the classes behind four contracts, not rewriting the app. Dependencies point inwards to a domain that knows nothing about Unity, AR or AI (the dependency rule; Martin, 2017). Each sensing step sits behind an interface with a scripted and a real implementation, chosen at start-up by `App/Composition.cs`; this is the Strategy pattern (Gamma et al., 1994).
+
+**Nothing scripted in live mode.** Live mode holds no planted faults, no expected colours and no pin positions in code. Wiring rules come from the manuals, kept in one place (`AxisCatalog`); where each terminal sits comes from a template per connector (one reference photo with its pins marked); colour references and the confidence temperature come from data files fitted on bench photos. Supporting a new connector or a new cable colour therefore means adding data, not changing code. The test readers (`dummy`) answer the same for every photo and exist only to test the plumbing; the service starts with the real reader unless one is chosen explicitly.
 
 ```mermaid
 flowchart TB
@@ -188,7 +193,7 @@ The AI only perceives; rules decide; a second, independent AI call can only lowe
 
 Each fix carries a *why* built from the manual's pin functions and a *symptom* (data fault: reader LED keeps flashing red; power fault: reader does not power up, fix before powering). A fix that touches pin 1 or 2 adds "do this with the power off". Every pin that is wrong points to exactly one fix, so one red mark never shows two contradicting instructions. `RuleCheck.FixableAtDevice` is true only when every fix can be done at the reader; then an installer standing there fixes it there, otherwise all fixes are shown at the controller.
 
-The logic is pure C# with no Unity dependency. `tools/domain-tests` checks both planted faults, reversed power, a missing wire, a foreign wire, a three-wire rotation, which fixes the reader end can do, the verdict table, label parsing and pairing, the record store and the log format; all pass.
+The logic is pure C# with no Unity dependency and makes no assumption about which fault occurred. `tools/domain-tests` checks both demonstration faults, reversed power, a missing wire, a foreign wire, a three-wire rotation, which fixes the reader end can do, the verdict table, label parsing and pairing, the record store and the log format; all pass.
 
 ## Low cognitive load: scan first, either end
 
