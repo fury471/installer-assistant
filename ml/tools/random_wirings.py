@@ -3,6 +3,8 @@
 Prints the shot list for one session: each line is a wiring to set up and photograph.
 The list is also the answer key: it says which module and which pin each colour is on in those photos.
 The cable's label always says READER1; shots "on READER2" test the zone check (keep Reader 1 in the photo too).
+Shots marked "+ other cable" test the bundle check: a wire from a second, labelled cable (label C02) sits on a free pin
+of the same module. It has the same colour as one of this cable's wires, because only then is colour no help.
 Run from the repository root:  python ml\tools\random_wirings.py
 """
 import random
@@ -48,12 +50,34 @@ def realistic_wiring():
     return wiring
 
 
+# Which shots test the zone check and the bundle check. A fixed number per session (not left to chance), so that
+# every session, including the test session, has some; the shots themselves are drawn at random.
+N_WRONG_MODULE = 2               # shots with the whole cable on READER2 while the label says READER1
+N_TANGLED = 2                    # shots with a wire from another cable on a free pin of this module
+
 module_random = random.Random(1000 + SESSION)    # its own dice, so the wirings above stay as in lists already printed
+tangle_random = random.Random(2000 + SESSION)    # its own dice again, for the same reason
+
+WRONG_MODULE_SHOTS = set(module_random.sample(range(1, N_CTRL + 1), N_WRONG_MODULE))
+TANGLED_SHOTS = set(tangle_random.sample([i for i in range(1, N_CTRL + 1) if i not in WRONG_MODULE_SHOTS], N_TANGLED))
 
 
-def module_for_shot():
-    """Mistake 3: the whole cable sits in the wrong module (about 1 shot in 6), for the zone check."""
-    return module_random.choices([LABEL_MODULE, OTHER_MODULE], weights=[5, 1])[0]
+def module_for_shot(i):
+    """Mistake 3: the whole cable sits in the wrong module, for the zone check."""
+    return OTHER_MODULE if i in WRONG_MODULE_SHOTS else LABEL_MODULE
+
+
+def tangle_for_shot(i, wiring):
+    """Mistake 4: a wire from ANOTHER cable sits on a free pin of this module, for the bundle check.
+
+    Returns (colour, pin) of the other cable's wire, or None for a normal shot. The colour is one of this cable's
+    own colours, so the bundle check cannot tell the wires apart by colour. Never combined with a wrong-module shot,
+    so each shot tests one check at a time.
+    """
+    if i not in TANGLED_SHOTS:
+        return None
+    free_pins = [pin for pin in CTRL_PINS if pin not in wiring.values()]
+    return tangle_random.choice(WIRES), tangle_random.choice(free_pins)
 
 
 random.seed(SESSION)                                              # same list every time for this session
@@ -62,8 +86,12 @@ print()
 print("CONTROLLER")
 for i in range(1, N_CTRL + 1):
     w = realistic_wiring()
-    module = module_for_shot()
-    print(f"ctrl wiring {i:02d} on {module}: " + ", ".join(f"{c} → {w[c]}" for c in WIRES))
+    module = module_for_shot(i)
+    other = tangle_for_shot(i, w)
+    line = f"ctrl wiring {i:02d} on {module}: " + ", ".join(f"{c} → {w[c]}" for c in WIRES)
+    if other:
+        line += f"   + other cable's {other[0]} → {other[1]}"
+    print(line)
 print()
 print("READER")
 for i in range(1, N_RDR + 1):
