@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: DemoLayout2
   m_EditorClassIdentifier: Assembly-CSharp::InstallerAssistant.WizardOfOz.DemoLayout
   doorName: Door 1
-  cableLabel: IA|D1|READER|C01
+  cableLabel: IA|C01|D1|A1610.READER1|A4020E
   reader:
     photo: {fileID: 2800000, guid: d20d58ba597a4f04864a7f4fe51e8cef, type: 3}
     points:

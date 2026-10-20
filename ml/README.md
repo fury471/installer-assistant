@@ -2,8 +2,9 @@
 
 | Folder | What |
 | --- | --- |
-| `perception_service/` | The HTTP service the app calls in live mode: `/read` (layer 1, wire colours and positions) and `/compare` (layer 3, independent second opinion). Contract: `perception_service/README.md`. |
-| `eval/` | Accuracy report on annotated photos: colour accuracy, confusion matrix, position error, ECE, coverage above the amber threshold, latency. |
+| `perception_service/` | The HTTP service the app calls in live mode: `/read` (layer 1, wire colours and positions in the module the label names, where each wire runs back to (`tracing.py`), plus the zone survey of the controller's other modules) and `/compare` (layer 3, independent second opinion). Contract: `perception_service/README.md`. |
+| `eval/` | Accuracy report on annotated photos: colour accuracy, confusion matrix, position error, ECE, coverage above the amber threshold, module occupancy accuracy (zone survey), trace coverage and accuracy (bundle check), latency. |
+| `tools/` | `random_wirings.py`: the bench shot list and answer key (random wirings, some on the wrong module). |
 | `tests/` | Contract and metric tests: `python -m pytest ml/tests` (run from the repository root). |
 
 Quick start, from the repository root:
@@ -14,7 +15,7 @@ python -m pytest ml/tests
 python -m uvicorn ml.perception_service.app:app --host 0.0.0.0 --port 8000
 ```
 
-Readers are chosen with the environment variable `IA_READER`: `dummy` (default, a correctly wired bench whatever the photo, for testing the app), `dummy-unknown` (finds nothing), `classical` (template + CIELAB baseline, being built). A VLM reader and a trained model go next to them in `perception_service/readers/`.
+Readers are chosen with the environment variable `IA_READER`: `classical` (default: template + CIELAB baseline, being built), `dummy` (a correctly wired bench whatever the photo, for testing the plumbing only, never for a demo), `dummy-unknown` (finds nothing), `dummy-elsewhere` (the cable sits on the first other module, to try the zone check), `dummy-tangled` (the wire on pin 2 traces to another cable, to try the bundle check). A VLM reader and a trained model go next to them in `perception_service/readers/`.
 
 Trained models: export to `.onnx`. The service can run them with onnxruntime; later the same file can run on the phone with Unity Sentis in `unity/InstallerAssistant/Assets/_Project/Models/`, behind the same `IWireReader`.
 

@@ -51,8 +51,13 @@ namespace InstallerAssistant.WizardOfOz
         {
             app = owner;
             L = layout != null ? layout : ScriptableObject.CreateInstance<DemoLayout>();
-            if (!CableLabel.TryParse(L.cableLabel, out label)) label = new CableLabel("D1", "READER", "C01");
-            rule = AxisCatalog.Lookup(label.Usage) ?? AxisCatalog.OsdpReaderOnReader1;
+            if (!CableLabel.TryParse(L.cableLabel, out label) || AxisCatalog.Resolve(label) == null)
+            {
+                Debug.LogWarning("[InstallerAssistant] The layout's cable label \"" + L.cableLabel + "\" is not a label the app can check; using " +
+                                 "IA|C01|D1|A1610.READER1|A4020E. Format: see CableLabel.");
+                label = new CableLabel("C01", "D1", AxisCatalog.OsdpReaderOnReader1.ControllerModule, AxisCatalog.OsdpReaderOnReader1.DeviceModule);
+            }
+            rule = AxisCatalog.Resolve(label);
             scenario = FirstUsableScenario(scenario);
             startWithoutLabel = Scenario.startWithMissingLabel;
             world = new WozWorld { Layout = L, Scenario = Scenario, Speed = speed, LabelAttached = !startWithoutLabel };

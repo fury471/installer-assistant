@@ -14,7 +14,8 @@ namespace InstallerAssistant.Detection
     /// change both sides together.
     ///
     ///   GET  /health    {"status":"ok","model":"..."}
-    ///   POST /read      ReadRequest    → ReadResponse     (layer 1: colour, confidence and position per terminal)
+    ///   POST /read      ReadRequest    → ReadResponse     (layer 1: colour, confidence and position per terminal,
+    ///                                                       plus the zone survey of the controller's other modules)
     ///   POST /compare   CompareRequest → CompareResponse  (layer 3: independent match/mismatch per pin)
     ///
     /// On a phone, "localhost" is the phone: use the laptop's address (same Wi-Fi), e.g. http://192.168.1.20:8000,
@@ -43,15 +44,28 @@ namespace InstallerAssistant.Detection
         }
 
         [Serializable]
+        public sealed class ModulePayload
+        {
+            /// <summary>Module as written on labels, e.g. "A1610.READER2".</summary>
+            public string module;
+            /// <summary>Its terminal names as printed, pin 1..n.</summary>
+            public string[] terminals;
+        }
+
+        [Serializable]
         public sealed class ReadRequest
         {
             public long frame_id;
             /// <summary>"device" or "controller".</summary>
             public string end;
-            /// <summary>Label usage, e.g. "READER"; selects the connector template.</summary>
-            public string usage;
+            /// <summary>The module to read, as the label names it: "A1610.READER1" or "A4020E". Selects the reference template.</summary>
+            public string module;
             /// <summary>Names as printed, in the order the response must use (device: rule order; controller: pin 1..n).</summary>
             public string[] terminals;
+            /// <summary>Controller only: the controller's other modules, to survey in the same frame (zone check). Empty at the device.</summary>
+            public ModulePayload[] other_modules = new ModulePayload[0];
+            /// <summary>The scanned cable label, without the end ("IA|C01|D1|A1610.READER1|A4020E"): each wire is traced back to it.</summary>
+            public string label = "";
             public ImagePayload image;
         }
 
@@ -65,6 +79,18 @@ namespace InstallerAssistant.Detection
             public float x, y;
             /// <summary>False when the terminal could not be located.</summary>
             public bool found;
+            /// <summary>Where the wire runs back to: "this_cable" (the scanned label), "other_cable", or "unknown".</summary>
+            public string trace = "unknown";
+        }
+
+        [Serializable]
+        public sealed class ModuleItems
+        {
+            public string module;
+            /// <summary>False when the module was not found in the frame.</summary>
+            public bool located;
+            /// <summary>One per terminal of that module, in the order of its ModulePayload.terminals.</summary>
+            public ReadItem[] items = new ReadItem[0];
         }
 
         [Serializable]
@@ -72,6 +98,8 @@ namespace InstallerAssistant.Detection
         {
             public long frame_id;
             public ReadItem[] items = new ReadItem[0];
+            /// <summary>One per requested other module, in the same order; empty if the service does not survey.</summary>
+            public ModuleItems[] other_blocks = new ModuleItems[0];
             public string model = "";
             public string error = "";
         }
@@ -86,7 +114,9 @@ namespace InstallerAssistant.Detection
         [Serializable]
         public sealed class CompareRequest
         {
-            public string usage;
+            /// <summary>The two modules from the label, e.g. "A1610.READER2" and "A4020E".</summary>
+            public string controller_module;
+            public string device_module;
             public int pin_count;
             public PairPayload[] pairs;
             public ImagePayload device_image;
@@ -105,14 +135,20 @@ namespace InstallerAssistant.Detection
         // ------------------------------------------------------------------ calls
 
         /// <summary>Reads one end. done(response, null) on success, done(null, error) otherwise.</summary>
-        public IEnumerator Read(CameraFrame frame, CableEnd end, UsageRule rule, Action<ReadResponse, string> done)
+        public IEnumerator Read(CameraFrame frame, CableEnd end, UsageRule rule, CableLabel cable, Action<ReadResponse, string> done)
         {
             var image = Encode(frame);
             if (image == null) { done(null, "the camera frame has no pixels (" + (frame != null ? frame.Source : "no frame") + ")"); yield break; }
-            var names = end == CableEnd.Controller ? PinNames(rule) : TerminalNames(rule);
+            bool ctrl = end == CableEnd.Controller;
+            var others = ctrl ? AxisCatalog.OtherModules(rule) : new ConnectorSpec[0];
+            var survey = new ModulePayload[others.Length];
+            for (int i = 0; i < others.Length; i++) survey[i] = new ModulePayload { module = others[i].Id, terminals = PinNames(others[i]) };
             var req = new ReadRequest
             {
-                frame_id = frame.Id, end = end == CableEnd.Controller ? "controller" : "device", usage = rule.Usage, terminals = names, image = image,
+                frame_id = frame.Id, end = ctrl ? "controller" : "device",
+                module = ctrl ? rule.ControllerModule.Code : rule.DeviceModule.Code,
+                terminals = ctrl ? PinNames(rule) : TerminalNames(rule), other_modules = survey, image = image,
+                label = cable != null ? cable.AtEnd(CableEnd.Unknown).Payload : "",
             };
             string text = null, error = null;
             yield return Post("/read", JsonUtility.ToJson(req), (t, e) => { text = t; error = e; });
@@ -132,7 +168,8 @@ namespace InstallerAssistant.Detection
                 pairs[i] = new PairPayload { terminal = rule.Terminal(rule.Pairs[i].DeviceTerminal).Print, pin = rule.Pairs[i].ControllerPin };
             var req = new CompareRequest
             {
-                usage = rule.Usage, pin_count = rule.Connector.Count, pairs = pairs,
+                controller_module = rule.ControllerModule.Code, device_module = rule.DeviceModule.Code,
+                pin_count = rule.Connector.Count, pairs = pairs,
                 device_image = Encode(deviceEnd) ?? new ImagePayload(), controller_image = Encode(controllerEnd) ?? new ImagePayload(),
             };
             string text = null, error = null;
@@ -206,10 +243,12 @@ namespace InstallerAssistant.Detection
             return n;
         }
 
-        public static string[] PinNames(UsageRule rule)
+        public static string[] PinNames(UsageRule rule) { return PinNames(rule.Connector); }
+
+        public static string[] PinNames(ConnectorSpec module)
         {
-            var n = new string[rule.Connector.Count];
-            for (int p = 1; p <= n.Length; p++) n[p - 1] = rule.Connector.Pin(p).Print;
+            var n = new string[module.Count];
+            for (int p = 1; p <= n.Length; p++) n[p - 1] = module.Pin(p).Print;
             return n;
         }
     }

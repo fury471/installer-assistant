@@ -52,8 +52,8 @@ namespace InstallerAssistant.WizardOfOz
 
         [Header("Cable")]
         public string doorName = "Door 1";
-        [Tooltip("Cable identity: QR payload \"IA|D1|READER|C01\" or printed text \"D1 · READER · C01\". The usage (READER) selects the wiring rule. The demo adds the end (DEV or CTRL) from the photo shown.")]
-        public string cableLabel = "IA|D1|READER|C01";
+        [Tooltip("The cable's plan: QR payload \"IA|C01|D1|A1610.READER1|A4020E\" (cable id, door, controller module, device module) or the printed text with \" · \" between the fields. The modules select the wiring rule; the bench photos show Reader 1. The demo adds the end (DEV or CTRL) from the photo shown.")]
+        public string cableLabel = "IA|C01|D1|A1610.READER1|A4020E";
 
         [Header("Reader end (AXIS A4020-E)")]
         public PhotoView reader = new PhotoView(new[]

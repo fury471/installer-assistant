@@ -19,7 +19,7 @@ namespace InstallerAssistant.Labels
     /// </summary>
     public sealed class QrLabelScanner : ILabelScanner
     {
-        /// <summary>Test only: if set, every scan "finds" this label (e.g. "IA|D1|READER|C01|DEV").</summary>
+        /// <summary>Test only: if set, every scan "finds" this label (e.g. "IA|C01|D1|A1610.READER1|A4020E|DEV").</summary>
         public static string DebugPayload = "";
 
         public IEnumerator Scan(CameraFrame frame, Action<LabelScan> done)
@@ -27,9 +27,16 @@ namespace InstallerAssistant.Labels
             yield return null;   // one frame, so the UI can update before decoding
             long id = frame != null ? frame.Id : 0;
             CableLabel label;
-            if (!string.IsNullOrEmpty(DebugPayload) && CableLabel.TryParse(DebugPayload, out label))
+            if (!string.IsNullOrEmpty(DebugPayload))
             {
-                done(new LabelScan { Status = LabelScanStatus.Found, Label = label, FrameId = id, Corners = Box(0.5f, 0.6f, 0.15f, 0.08f) });
+                if (CableLabel.TryParse(DebugPayload, out label))
+                    done(new LabelScan { Status = LabelScanStatus.Found, Label = label, FrameId = id, Corners = Box(0.5f, 0.6f, 0.15f, 0.08f) });
+                else
+                {
+                    Debug.LogWarning("[InstallerAssistant] Test Label \"" + DebugPayload + "\" is not a cable label. " +
+                                     "Format: IA|C01|D1|A1610.READER1|A4020E (see CableLabel).");
+                    done(new LabelScan { Status = LabelScanStatus.Unreadable, FrameId = id });
+                }
                 yield break;
             }
             string text; ImagePoint[] corners;

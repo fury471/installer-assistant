@@ -27,7 +27,7 @@ Design rationale for the report: see the "Installer Assistant – MVP Blueprint"
 The installer does not need to know anything before starting. The app learns everything from the cable label.
 
 1. **Home** has one action: **Scan a cable**. There is no job list or wiring table to read first.
-2. **Either end first.** The label says which cable it is and which end the installer is at (`IA|D1|READER|C01|DEV` at the reader, `…|CTRL` at the controller). The app reads the wires at that end; the installer confirms them (one tap, or a tap on an amber wire the camera is unsure of) and saves.
+2. **Either end first.** The label is the cable's plan: which cable, from which controller module to which device, and which end the installer is at (`IA|C01|D1|A1610.READER1|A4020E|DEV` at the reader, `…|CTRL` at the controller; format in `Labels/CableLabel.cs`). The bench photos show Reader 1, so the layouts' label names `A1610.READER1`. The app reads the wires at that end; the installer confirms them (one tap, or a tap on an amber wire the camera is unsure of) and saves.
 3. **Walk.** The app says where the other end is (from the label and the wiring rule: "AXIS A1610 · Reader 1 block" or "Door 1 · AXIS A4020-E reader"). **Finish later** keeps the cable on Home under "Waiting for the other end".
 4. **Pair and check.** At the other end the installer scans its label. The shared key pairs the two ends, and the rule check runs at once. The verdict is shown on the end in hand.
 5. **Fix where you stand.** Wire colours carry no meaning of their own, so a fault that only exchanges the cable's own wires (planted fault 1, A/B swapped) is fixed at whichever end the installer is at, with arrows between the terminals there. Only a fix that needs the controller (planted fault 2, B on O2) sends the installer back to it ("Go back to the controller"), and then every fix is shown there. Starting at the controller with fault 1 therefore ends with the fix at the reader; starting at the reader, both faults are fixed at the controller.
@@ -46,7 +46,7 @@ After a fix at the reader the demo shows `DemoLayout.readerFixed`. DemoLayout2 h
 ```
 Scripts/
   App/            InstallerApp.cs (state, start-up, operator API), .Pages.cs (Home, Reports, Settings, report),
-                  .Check.cs (scan, record, walk, pair, verdict, fix), Composition.cs (which services),
+                  .Check.cs (scan, zone, record, walk, pair, verdict, fix), Composition.cs (which services),
                   Services.cs (ServiceSet, OverlayStyle, IServiceSource, IStudyOperator)        ← C
   AR/             ICameraView (contract), ArCameraView (live: webcam now, AR Foundation next)    ← B
   Labels/         CableLabel (shared), ILabelScanner (contract), QrLabelScanner (live)           ← A
@@ -54,7 +54,8 @@ Scripts/
                   PerceptionTestBench (live)                                                     ← A
   AI/             ISecondOpinion (contract), PerceptionSecondOpinion (live)                      ← A
   Records/        IRecordStore, InMemoryRecordStore, SessionLog, JsonRecordStore (live)          ← C
-  Verification/   AxisCatalog, CableRecord, ControllerRecord, RuleChecker, ControllerCheck       ← shared
+  Verification/   AxisCatalog, CableRecord, ControllerRecord, ZoneCheck, BundleCheck,
+                  RuleChecker, ControllerCheck                                                   ← shared
   UI/             UiKit (design system), ArOverlay (markers, tag layout, fix arrows)             ← C
   WizardOfOz/     WizardOfOzRig (services + operator keys), PhotoCameraView (photos, calibration),
                   WozServices (scripted scanner, reader, second opinion), DemoLayout, MockPhotos ← C
@@ -91,15 +92,17 @@ Each scripted service has a live counterpart behind the same contract; `App/Comp
 | --- | --- | --- | --- |
 | `ICameraView` | B · AR runtime | `PhotoCameraView`: the photo of the end, frames without pixels | `ArCameraView`: webcam now; ARCore CPU image, intrinsics, pose and world anchors next |
 | `ILabelScanner.Scan(frame)` | A · Perception and AI | `WozLabelScanner`: the layout's label and its corners | `QrLabelScanner`: ZXing.Net on the frame |
-| `IWireReader.Read…End(rule, frame)` | A · Perception and AI | `WozWireReader`: the layout's colours and points | `PerceptionWireReader` → `ml/perception_service` `/read` |
+| `IWireReader.Read…End(rule, frame)` | A · Perception and AI | `WozWireReader`: the layout's colours and points; no survey of other modules and no traces, so no zone or bundle check | `PerceptionWireReader` → `ml/perception_service` `/read`, with the survey of the other modules (`other_blocks`) for the zone check and a trace per wire for the bundle check |
 | `ISecondOpinion.Compare(record, deviceFrame, controllerFrame)` | A · Perception and AI | `WozSecondOpinion`: disagrees once | `PerceptionSecondOpinion` → `/compare` |
 | `IRecordStore` | C · App and records | `InMemoryRecordStore` | `JsonRecordStore` |
 
 The contracts are frozen: change one only with a pull request all three approve.
 
+The zone check ("Move the cable to Reader 1") needs the live reader's survey, so the Wizard of Oz never shows it. To see it without hardware: `App.unity`, Mode = Live, Test Label = `IA|C01|D1|A1610.READER1|A4020E|CTRL`, and start the service with `IA_READER=dummy-elsewhere`. The bundle check ("The wire on 12V is from another cable") likewise needs the live reader's traces: start the service with `IA_READER=dummy-tangled`.
+
 ## Tests
 
-`tools/domain-tests` compiles the domain sources directly and checks both planted faults, power reversal, a missing wire, a foreign wire, a three-wire rotation, the verdict table, label parsing (including which end and pairing), the controller-first check and the CSV log.
+`tools/domain-tests` compiles the domain sources directly and checks both planted faults, power reversal, a missing wire, a foreign wire, a three-wire rotation, the verdict table, label parsing (the plan, which end, pairing and misprinted pairs), binding a plan to Reader 1 or Reader 2, the zone check, the bundle check, the controller-first check and the CSV log.
 
 ```
 dotnet run --project tools/domain-tests

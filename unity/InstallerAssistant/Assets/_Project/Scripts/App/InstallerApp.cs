@@ -44,7 +44,7 @@ namespace InstallerAssistant.App
         public string perceptionUrl = "http://localhost:8000";
         [Tooltip("Records file in Application.persistentDataPath.")]
         public string recordsFile = "installer-assistant-records.json";
-        [Tooltip("Test only: the live label scanner \"finds\" this label every time, e.g. IA|D1|READER|C01 (no end: the app asks which end).\nLets you run the live flow before QR decoding works. Leave empty for real scanning.")]
+        [Tooltip("Test only: the live label scanner \"finds\" this label every time, e.g. IA|C01|D1|A1610.READER1|A4020E (no end: the app asks which end).\nLets you run the live flow before QR decoding works. Leave empty for real scanning.")]
         public string testLabel = "";
 
         [Header("Look")]
@@ -64,6 +64,8 @@ namespace InstallerAssistant.App
         sealed class Cable
         {
             public CableLabel Label;
+            /// <summary>The rule the label resolves to (which modules, which pins).</summary>
+            public UsageRule Rule;
             public string Title, Detail;
             public CableState State;
             public CableEnd FirstEnd;
@@ -171,8 +173,8 @@ namespace InstallerAssistant.App
             {
                 op.SessionReset();
                 CableLabel d2;
-                CableLabel.TryParse("IA|D2|READER|C02", out d2);
-                var door2 = new Cable { Label = d2, Title = "Door 2 reader", State = CableState.Verified, Detail = "AXIS A4020-E → A1610, Reader 2" };
+                CableLabel.TryParse("IA|C02|D2|A1610.READER2|A4020E", out d2);
+                var door2 = new Cable { Label = d2, Rule = AxisCatalog.Resolve(d2), Title = "Door 2 reader", State = CableState.Verified, Detail = "AXIS A4020-E → A1610, Reader 2" };
                 reports.Add(new Report { Cable = door2, At = new DateTime(DateTime.Now.Year, 10, 14, 15, 42, 0), Fixes = 0, CheckedByYou = 0, Wires = 4,
                     Seconds = 98, FixText = "No fixes needed" });
             }
@@ -223,15 +225,23 @@ namespace InstallerAssistant.App
         {
             Cable c;
             if (cables.TryGetValue(label.Key, out c)) return c;
-            var r = AxisCatalog.Lookup(label.Usage) ?? rule;
+            var r = AxisCatalog.Resolve(label) ?? rule;
             c = new Cable
             {
-                Label = label.AtEnd(CableEnd.Unknown), State = CableState.New,
-                Title = label.DoorName + " " + label.Usage.ToLowerInvariant(),
+                Label = label.AtEnd(CableEnd.Unknown), Rule = r, State = CableState.New,
+                Title = TitleOf(label, r),
                 Detail = Short(r.DeviceModel) + " → " + Short(r.ControllerModel) + ", " + r.Connector.Name,
             };
             cables[label.Key] = c;
             return c;
+        }
+
+        /// <summary>"Door 1 reader", or "Reader C01" for a cable without a door.</summary>
+        static string TitleOf(CableLabel label, UsageRule r)
+        {
+            string word = r != null ? r.Usage.ToLowerInvariant() : "device";
+            if (label == null) return "this cable";
+            return label.HasDoor ? label.DoorName + " " + word : char.ToUpperInvariant(word[0]) + word.Substring(1) + " " + label.CableId;
         }
 
         void MarkOneEnd(Cable c, CableEnd e, DateTime at)

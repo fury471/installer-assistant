@@ -3,6 +3,8 @@
 colour accuracy and confusion matrix   per terminal, over terminals that carry a wire or should be empty
 decode rate                            labels found / labels shown
 position error                         distance between predicted and annotated terminal, in image widths
+module occupancy accuracy              zone survey: does each module hold wires, reader vs annotation
+trace coverage / accuracy              bundle check: share of wires traced to a cable, and how often rightly
 ECE                                    expected calibration error (Guo et al. 2017), 10 equal-width bins
 coverage / selective accuracy          share of terminals above the amber threshold, and accuracy on them
 """
@@ -20,6 +22,11 @@ def confusion(true: Sequence[int], pred: Sequence[int]) -> np.ndarray:
     for t, p in zip(true, pred):
         m[t if t >= 0 else N_COLOURS, p if p >= 0 else N_COLOURS] += 1
     return m
+
+
+def holds_wires(colours: Sequence[int]) -> bool:
+    """True if any terminal of a module carries a wire (the zone check's question)."""
+    return any(c != NO_WIRE for c in colours)
 
 
 def accuracy(true: Sequence[int], pred: Sequence[int]) -> float:
