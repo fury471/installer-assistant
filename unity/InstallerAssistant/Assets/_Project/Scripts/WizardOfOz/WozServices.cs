@@ -97,13 +97,13 @@ namespace InstallerAssistant.WizardOfOz
         }
     }
 
-    /// <summary>Stands in for the VLM wire reading (layer 1).</summary>
+    /// <summary>Stands in for the VLM wire reading (layer 1). It does not trace wires or survey other modules, so the bundle and zone checks stay silent.</summary>
     public sealed class WozWireReader : IWireReader
     {
         readonly WozWorld w;
         public WozWireReader(WozWorld world) { w = world; }
 
-        public IEnumerator ReadDeviceEnd(UsageRule rule, CameraFrame frame, Action<DeviceEndReading> done)
+        public IEnumerator ReadDeviceEnd(UsageRule rule, CableLabel cable, CameraFrame frame, Action<DeviceEndReading> done)
         {
             yield return w.Delay(w.ReaderReads == 0 ? 2.4f : 1.8f);
             int n = rule.DeviceTerminals.Length;
@@ -118,7 +118,7 @@ namespace InstallerAssistant.WizardOfOz
             done(new DeviceEndReading(colours, conf, WozWorld.Points(w.View, n), frame != null ? frame.Id : 0));
         }
 
-        public IEnumerator ReadControllerEnd(UsageRule rule, CameraFrame frame, Action<ControllerReading> done)
+        public IEnumerator ReadControllerEnd(UsageRule rule, CableLabel cable, CameraFrame frame, Action<ControllerReading> done)
         {
             yield return w.Delay(w.ControllerChecks == 0 ? 2.2f : 1.6f);
             int n = rule.Connector.Count;

@@ -17,8 +17,8 @@ namespace InstallerAssistant.Detection
         [Tooltip("A photo of one end. Import settings: Read/Write enabled.")]
         public Texture2D image;
         public CableEnd end = CableEnd.Controller;
-        [Tooltip("Label usage that selects the wiring rule.")]
-        public string usage = "READER";
+        [Tooltip("The cable's label (its plan): selects the wiring rule and the module the service looks for.")]
+        public string cableLabel = "IA|C01|D1|A1610.READER1|A4020E";
         public string perceptionUrl = "http://localhost:8000";
         public bool runOnStart = true;
 
@@ -39,8 +39,9 @@ namespace InstallerAssistant.Detection
 
         IEnumerator RunRoutine()
         {
-            rule = AxisCatalog.Lookup(usage);
-            if (image == null || rule == null) { status = image == null ? "Assign an image" : "Unknown usage " + usage; yield break; }
+            CableLabel plan; string problem = "not a cable label";
+            rule = CableLabel.TryParse(cableLabel, out plan) ? AxisCatalog.Resolve(plan, out problem) : null;
+            if (image == null || rule == null) { status = image == null ? "Assign an image" : "Label \"" + cableLabel + "\": " + problem; yield break; }
             if (!image.isReadable) { status = "Enable Read/Write on the image's import settings"; yield break; }
             var frame = FrameOf(image);
 
@@ -54,7 +55,7 @@ namespace InstallerAssistant.Detection
             var client = new PerceptionClient(perceptionUrl);
             float t0 = Time.realtimeSinceStartup;
             string error = null;
-            yield return client.Read(frame, end, rule, (r, e) => { last = r; error = e; });
+            yield return client.Read(frame, end, rule, plan, (r, e) => { last = r; error = e; });
             float ms = (Time.realtimeSinceStartup - t0) * 1000f;
             if (error != null) { status = "Error: " + error; Debug.LogWarning("[PerceptionTestBench] " + error); yield break; }
 
@@ -64,8 +65,17 @@ namespace InstallerAssistant.Detection
             {
                 var it = last.items[i];
                 sb.Append(names[i]).Append(": ").Append(WireColours.Name(it.colour)).Append(' ').Append((it.confidence * 100).ToString("0")).Append('%')
-                  .Append(it.found ? " at (" + it.x.ToString("0.000") + ", " + it.y.ToString("0.000") + ")" : " not located").Append('\n');
+                  .Append(it.found ? " at (" + it.x.ToString("0.000") + ", " + it.y.ToString("0.000") + ")" : " not located")
+                  .Append(it.colour >= 0 ? " · runs to " + it.trace : "").Append('\n');
             }
+            // the zone survey: which of the controller's other modules the service found, and how many wires each holds
+            if (end == CableEnd.Controller && last.other_blocks != null)
+                foreach (var b in last.other_blocks)
+                {
+                    int wires = 0;
+                    if (b.items != null) foreach (var it in b.items) if (it.colour >= 0) wires++;
+                    sb.Append(b.module).Append(": ").Append(b.located ? wires + (wires == 1 ? " wire" : " wires") : "not located").Append('\n');
+                }
             status = sb.ToString();
             Debug.Log("[PerceptionTestBench] " + labelText + "\n" + status);
         }

@@ -150,7 +150,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::InstallerAssistant.Detection.PerceptionTestBench
   image: {fileID: 0}
   end: 2
-  usage: READER
+  cableLabel: IA|C01|D1|A1610.READER1|A4020E
   perceptionUrl: http://localhost:8000
   runOnStart: 1
 --- !u!4 &498911188

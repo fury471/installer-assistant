@@ -27,6 +27,12 @@ namespace InstallerAssistant.Verification
     }
 
     /// <summary>
+    /// Where a wire runs when the reader follows it back from its terminal: to the scanned cable label (this cable),
+    /// to another cable, or the reader could not tell. Unknown never counts against the wiring.
+    /// </summary>
+    public enum WireTrace { Unknown, ThisCable, OtherCable }
+
+    /// <summary>
     /// What the wire reader saw at the device end, per device terminal in the rule's terminal order:
     /// the colour, a 0-1 confidence and where the terminal is in the frame that was read.
     /// </summary>
@@ -38,18 +44,23 @@ namespace InstallerAssistant.Verification
         public readonly ImagePoint[] Positions;
         /// <summary>Id of the camera frame the reading was made from (0 = unknown).</summary>
         public readonly long FrameId;
+        /// <summary>Per terminal: does its wire run back to the scanned label? (bundle check; Unknown if not traced)</summary>
+        public readonly WireTrace[] Traces;
 
-        public DeviceEndReading(int[] colours, float[] confidence, ImagePoint[] positions = null, long frameId = 0)
+        public DeviceEndReading(int[] colours, float[] confidence, ImagePoint[] positions = null, long frameId = 0, WireTrace[] traces = null)
         {
             Colours = colours; Confidence = confidence;
             Positions = positions ?? new ImagePoint[colours.Length];
             FrameId = frameId;
+            Traces = traces ?? new WireTrace[colours.Length];
         }
     }
 
     /// <summary>
-    /// What the wire reader saw at the controller, per pin of the block (index = pin - 1):
+    /// What the wire reader saw at the controller, per pin of the module the label names (index = pin - 1):
     /// the colour (or None), a 0-1 confidence and where the pin is in the frame that was read.
+    /// OtherModules is what it saw on the controller's other modules in the same frame (the zone survey); empty when
+    /// the reader looked only at the named module, and then the zone check is skipped.
     /// </summary>
     public sealed class ControllerReading
     {
@@ -59,17 +70,76 @@ namespace InstallerAssistant.Verification
         public readonly ImagePoint[] Positions;
         /// <summary>Id of the camera frame the reading was made from (0 = unknown).</summary>
         public readonly long FrameId;
+        /// <summary>The controller's other modules as seen in the same frame (see AxisCatalog.OtherModules).</summary>
+        public readonly ModuleReading[] OtherModules;
+        /// <summary>Per pin: does its wire run back to the scanned label? (bundle check; Unknown if not traced)</summary>
+        public readonly WireTrace[] Traces;
 
-        public ControllerReading(int[] colours, float[] confidence, ImagePoint[] positions = null, long frameId = 0)
+        public ControllerReading(int[] colours, float[] confidence, ImagePoint[] positions = null, long frameId = 0, ModuleReading[] otherModules = null,
+            WireTrace[] traces = null)
         {
             Colours = colours; Confidence = confidence;
             Positions = positions ?? new ImagePoint[colours.Length];
             FrameId = frameId;
+            OtherModules = otherModules ?? new ModuleReading[0];
+            Traces = traces ?? new WireTrace[colours.Length];
         }
 
         public int ColourOnPin(int pin) { return Colours[pin - 1]; }
         public float ConfidenceOnPin(int pin) { return Confidence[pin - 1]; }
         public ImagePoint PositionOfPin(int pin) { return Positions[pin - 1]; }
+
+        /// <summary>True if the reader placed at least one pin of the named module in the frame.</summary>
+        public bool Located
+        {
+            get
+            {
+                foreach (var p in Positions) if (p.Valid) return true;
+                return false;
+            }
+        }
+
+        /// <summary>Number of pins that hold a wire.</summary>
+        public int Wires { get { return ModuleReading.Count(Colours); } }
+    }
+
+    /// <summary>One other module of the controller as the wire reader saw it: is it in the frame, and which pins hold wires.</summary>
+    public sealed class ModuleReading
+    {
+        public readonly ConnectorSpec Module;
+        /// <summary>False when the module was not found in the frame (its colours are then all None).</summary>
+        public readonly bool Located;
+        /// <summary>Colour per pin (index = pin - 1), None = empty.</summary>
+        public readonly int[] Colours;
+        public readonly float[] Confidence;
+        public readonly ImagePoint[] Positions;
+
+        public ModuleReading(ConnectorSpec module, bool located, int[] colours, float[] confidence = null, ImagePoint[] positions = null)
+        {
+            Module = module; Located = located; Colours = colours;
+            Confidence = confidence ?? new float[colours.Length];
+            Positions = positions ?? new ImagePoint[colours.Length];
+        }
+
+        /// <summary>Number of pins that hold a wire.</summary>
+        public int Wires { get { return Located ? Count(Colours) : 0; } }
+
+        /// <summary>Centre of the pins the reader placed, or None.</summary>
+        public ImagePoint Centre { get { return Mean(Positions); } }
+
+        public static int Count(int[] colours)
+        {
+            int n = 0;
+            if (colours != null) foreach (int c in colours) if (c != WireColours.None) n++;
+            return n;
+        }
+
+        public static ImagePoint Mean(ImagePoint[] points)
+        {
+            float x = 0, y = 0; int n = 0;
+            if (points != null) foreach (var p in points) if (p.Valid) { x += p.X; y += p.Y; n++; }
+            return n == 0 ? ImagePoint.None : new ImagePoint(x / n, y / n);
+        }
     }
 
     /// <summary>

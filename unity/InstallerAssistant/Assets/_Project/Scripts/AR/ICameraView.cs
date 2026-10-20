@@ -75,6 +75,8 @@ namespace InstallerAssistant.AR
         public static string Terminal(int index) { return "terminal:" + index; }
         /// <summary>A controller pin by its number (1-based, as printed).</summary>
         public static string Pin(int pin) { return "pin:" + pin; }
+        /// <summary>A controller module as a whole, by its label id ("A1610.READER2"): where the zone check points.</summary>
+        public static string Module(string id) { return "module:" + id; }
         /// <summary>The key of mark index i at the given end (device: terminal i; controller: pin i + 1).</summary>
         public static string Of(CableEnd end, int index) { return end == CableEnd.Controller ? Pin(index + 1) : Terminal(index); }
     }

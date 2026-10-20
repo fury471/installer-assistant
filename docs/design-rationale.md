@@ -1,8 +1,8 @@
 # Installer Assistant – MVP Blueprint & Design Rationale
 
-Yu (package A) · first written 17 Oct 2026, updated 18 Oct 2026. Source for the course report: every design decision here has a reason the report can cite. Change it through a pull request like any other file.
+Yu (package A) · first written 17 Oct 2026, updated 20 Oct 2026 (labels carry the cable's plan; zone check; bundle check). Source for the course report: every design decision here has a reason the report can cite. Change it through a pull request like any other file.
 
-The MVP verifies one cable end to end: an AXIS A4020-E reader wired to port READER 1 of an AXIS A1610 door controller. In live mode it checks **any wiring** of that cable, as the installer actually made it: the first end's record and the A1610 pin table define what is correct, not a list of known faults, so every swap, move, missing or extra wire is found and its fix shown where the installer's hands are. The Wizard-of-Oz mode demonstrates how the product looks and feels with two planted faults; it is the blueprint for the interaction and the study's fallback, not the limit of the product. Its flow, screens, wiring rules, fix logic and verdicts are the app's real code; only the sensing services (camera view, label scanner, wire reader, second opinion) are scripted, and only in that mode.
+The MVP verifies one cable end to end: an AXIS A4020-E reader wired to a reader port of an AXIS A1610 door controller, Reader 1 or Reader 2 as the cable's label plans. In live mode it checks **any wiring** of that cable, as the installer actually made it: the first end's record and the A1610 pin table define what is correct, not a list of known faults, so every swap, move, missing or extra wire is found and its fix shown where the installer's hands are. The Wizard-of-Oz mode demonstrates how the product looks and feels with two planted faults; it is the blueprint for the interaction and the study's fallback, not the limit of the product. Its flow, screens, wiring rules, fix logic and verdicts are the app's real code; only the sensing services (camera view, label scanner, wire reader, second opinion) are scripted, and only in that mode.
 
 ## Goal and research question
 
@@ -18,11 +18,11 @@ The MVP is the smallest product that can answer the research question on the len
 
 | Area | In the MVP | Later |
 | --- | --- | --- |
-| Usage | OSDP reader on port READER 1, controller-powered | Port READER 2, Wiegand readers, door monitor (Door 1, IO5/IO6), lock relays |
+| Usage | OSDP reader on a reader port (Reader 1 or Reader 2, as the label plans), controller-powered | Wiegand readers, door monitor (Door 1, IO5/IO6), lock relays |
 | Faults found (live) | Any difference between the two ends: swaps, moves, rotations, missing, extra or wrong-pin wires; unclear pins go amber | Faults the camera cannot see (a loose screw, a broken core) |
-| Cable identity | Label scanned at both ends; check blocked without it | App-generated labels |
+| Cable identity and plan | Label at both ends names the cable and its plan (controller module → device); check blocked without it | Labels printed from the site's planning tool |
 | Reader end | AI reads 4 terminals; installer confirms, edits or rescans | — |
-| Controller end | All 8 pins of Reader 1 read; rules + independent AI second opinion | Several blocks in one view |
+| Controller end | Zone check first (is the cable in the planned module?), then all 8 pins of that module read; rules + independent AI second opinion | Several cables checked in one view |
 | Feedback | Green / red with fix / amber "check this", AR fix arrows, linked snapshot | Voice, glove-friendly gestures |
 | Record | Session log (CSV) and both snapshots | Report export to the customer's system |
 | Device status | Physical symptom named in the fix card | Reading reader status from the A1610 |
@@ -40,6 +40,8 @@ A missing label at the controller end is planted in case 1 as a process fault. O
 
 Every pin name, pairing and symptom the app shows comes from the Axis manuals and was checked against the team's photos of the lent kit. In code it lives in one place, `Verification/AxisCatalog.cs`, so a rule is fixed once.
 
+Each wiring rule is extracted from the documentation of exactly one use case, and names its sources (`WiringTemplate.Source`). The MVP has one use case and therefore one rule: an OSDP reader (AXIS A4020-E) on a reader port of the A1610, from the A1610 manual's Reader connector table and the A4020-E manual's wiring table. The label's plan decides whether that rule is checked on Reader 1 or Reader 2. The catalogue also lists Door 1, but only so the zone check can look there; no rule wires anything to it. A new use case (a lock on a Relay connector, a door monitor on a Door connector) means a new rule taken from its own section of the manual, in the same form.
+
 **AXIS A1610, Reader 1 block (blue, 8 pins)**
 
 | Pin | Printed on plug | Silkscreen | Function (A1610 manual, Reader connector) | OSDP reader |
@@ -53,7 +55,7 @@ Every pin name, pairing and symptom the app shows comes from the Axis manuals an
 | 7 | IO7 | IO7 | Configurable input/output | must be empty |
 | 8 | IO8 | IO8 | Configurable input/output | must be empty |
 
-Reader 2 is the green block with the same layout (O3, O4, IO9, IO10). The protocol is chosen per port in the A1610's web page.
+Reader 2 is the green block with the same layout (O3, O4, IO9, IO10). The protocol is chosen per port in the A1610's web page. The A1610 has two reader connectors, two door connectors, two relay connectors and an auxiliary, an external and two power connectors (A1610 user manual, Connectors). Because the two reader ports are identical, which one a reader uses is a planning decision, not a property of the door: the label names it, and the app never derives it from the door number.
 
 **AXIS A4020-E reader**
 
@@ -66,14 +68,14 @@ Sources: [AXIS A1610 user manual](https://help.axis.com/en-us/axis-a1610), [AXIS
 
 ## Verification flow
 
-The installer starts at whichever end is in front of them. The label says which cable it is and which end (DEV or CTRL), so the app records that end, names where the other end is, and pairs the two scans by the cable key. The first-end record, not a colour convention, defines what the other end must look like, whichever end was scanned first.
+The installer starts at whichever end is in front of them. The label is the cable's plan: which cable, from which controller module to which device, and which end it sits on (CTRL or DEV). So the app records that end, names where the other end is, and pairs the two scans by the cable key. The first-end record, not a colour convention, defines what the other end must look like, whichever end was scanned first. At the controller, the zone check comes before the pins: is the cable in the module its label names?
 
 ```mermaid
 flowchart TB
     subgraph first["First end · reader or controller"]
         direction LR
-        S["Scan a cable<br/>either end, nothing to read"] --> L1["Scan label<br/>which cable, which end, rule"]
-        L1 --> R1["AI reads<br/>colour of each wire at this end"]
+        S["Scan a cable<br/>either end, nothing to read"] --> L1["Scan label<br/>which cable, its plan, which end"]
+        L1 --> R1["AI reads<br/>colour of each wire, and where it runs"]
         R1 --> C1["You confirm<br/>amber must be checked first"]
         C1 -- "rescan or edit" --> R1
         C1 --> SV["Save this end<br/>colours and a snapshot"]
@@ -83,7 +85,13 @@ flowchart TB
         L2["Scan label<br/>same key pairs the two ends"] --> Q{"Label found?"}
         Q -- no --> AT["Attach label<br/>overlay shows where it goes"]
         AT --> L2
-        Q -- yes --> CK["Check the pair<br/>rules and AI 2nd opinion"]
+        Q -- yes --> Z{"At the controller:<br/>in the planned module?"}
+        Z -- "no: wires on another module" --> MV["Move the cable<br/>to the module the label names"]
+        MV --> Z
+        Z -- "yes, or at the reader" --> B{"Do the wires run back<br/>to this label?"}
+        B -- "no: a wire of another cable" --> TO["Take it off"]
+        TO --> B
+        B -- yes --> CK["Check the pair<br/>rules and AI 2nd opinion"]
         CK --> RS["Result per wire<br/>on the end in your hand"]
         RS -- "all green" --> V(["Verified<br/>record + log, power-up check"])
         RS -- red --> FX["Fix<br/>here when this end can do it,<br/>else at the controller; arrows on terminals or pins"]
@@ -92,7 +100,38 @@ flowchart TB
     SV -- "walk to the other end · or finish later" --> L2
 ```
 
-The check cannot start without the label, because the label is the only thing that links the two ends of one cable. The verdict appears on the end in hand. Fixes are shown where the installer stands whenever that end can do them: wire colours carry no meaning of their own (assumption 7), so a swap among the cable's own wires is fixed at either end. Only a fix that needs the controller (a wire on a pin the rule does not use, an extra wire or a loose wire) sends the installer back, and then every fix is listed there, in one place. Every red pin loops back to a recheck after re-wiring. Amber pins are decided by the installer in the fix card, against the linked snapshot of the other end.
+The check cannot start without the label, because the label is the only thing that links the two ends of one cable and the only statement of where the cable should go. The zone check also runs when the controller is the first end, and the bundle check runs at every reading, at either end. The verdict appears on the end in hand. Fixes are shown where the installer stands whenever that end can do them: wire colours carry no meaning of their own (assumption 7), so a swap among the cable's own wires is fixed at either end. Only a fix that needs the controller (a wire on a pin the rule does not use, an extra wire or a loose wire) sends the installer back, and then every fix is listed there, in one place. Every red pin loops back to a recheck after re-wiring. Amber pins are decided by the installer in the fix card, against the linked snapshot of the other end.
+
+### The label is the plan, and the zone check
+
+**Label format.** `IA|C01|D1|A1610.READER2|A4020E|CTRL`: prefix, cable id, door, controller module, device module, and the end this label sits on. The controller module always comes first and must name a module; a device with one terminal block is written without one (`A4020E`). The two labels of a cable differ only in the last field, and the printed text under the QR code carries the same fields separated by "·". The door is for people only. `AxisCatalog.Resolve` binds the wiring template for the two module kinds (an OSDP reader on any reader port) to the module the label names, so one template serves Reader 1 and Reader 2, and an unknown module is refused with a sentence that names the modules the controller has.
+
+Why the label, not the door: the planner decides which port a door's reader uses, and nothing stops Door 1's reader from going on Reader 2. Labelling each cable at both ends with one identifier is established practice in cabling administration (ANSI/TIA-606-C, 2017); putting the cable's from-module and to-module on that label lets the check verify the installation against the plan without a separate wiring table, and keeps the knowledge in the world rather than in the installer's head (Norman, 2013). Two labels that name the same cable with different plans are caught at the second end ("The two labels don't match"), since the app cannot know which one is right.
+
+**Zone check** (`Verification/ZoneCheck.cs`). Reader 1 and Reader 2 are identical blocks side by side, which invites a description-similarity slip: the right action on the wrong, similar-looking object (Norman, 1981; 2013). Without a zone check the app would look at the planned module, find it empty, and list four missing wires. With it, the wire reader also surveys the controller's other modules in the same frame (`ControllerReading.OtherModules`), and the check runs before the pins:
+
+| Planned module | Other modules | Shown |
+| --- | --- | --- |
+| Holds wires | any | The pin check, as before (it names every wrong pin) |
+| Not in the frame | any | "Point the camera at Reader 1" |
+| Empty | One holds wires in this cable's colours | "Move the cable to Reader 1", with "Not this cable" |
+| Empty | One holds wires, colours unknown or different | "Is this cable on Reader 2?", with "Not this cable" |
+| Empty | Several hold wires | "Reader 1 is empty. Wires were found on Reader 2 and Door 1" |
+| Empty | None hold wires | The pin check (it says which wires to connect) |
+
+The message states the recovery, not the symptom, as error messages should (Nielsen, 1994, "help users recognize, diagnose, and recover from errors"). Different cables often share colours, so a colour match only makes the message firmer; it never proves which cable sits where, and the installer can always answer "Not this cable". Modules that other scanned labels plan for are never suggested. Moving a cable moves its power wires, so the message adds "Turn the power off first".
+
+### Do the wires belong to the label? The bundle check
+
+Several cables often arrive at the same block, and different cables often share colours (assumption 2). A red wire on the right pin may therefore be another cable's red wire, and the colour check, which compares colours only, cannot see it. So the wire reader also follows each wire from its terminal back to where it comes from and reports, per wire, "this cable" (it reaches the scanned label), "another cable" (it reaches another cable's label) or "unknown" (`WireTrace`). `Verification/BundleCheck.cs` runs after the zone check and before the pin check, at either end:
+
+| Traces | Shown |
+| --- | --- |
+| No wire traced (Wizard of Oz, or the label out of view) | Nothing: the pin check as before |
+| Every traced wire reaches this label | Nothing: the pin check as before |
+| A wire reaches another cable | "The wire on 12V is from another cable": take it off, with "They are this cable's" to dismiss; the wire is marked red with "other cable" on the camera view |
+
+Unknown never counts against the wiring, so tracing only adds evidence; it never invents a fault. The baseline tracer (`ml/perception_service/tracing.py`) decodes every QR label in the frame, then grows a region from each terminal over pixels of the wire's colour (seeded region growing; Adams & Bischof, 1994) and sees which label the region reaches. It is simple and explainable, and it fails safe: two touching wires of the same colour merge and give "unknown". The planned steps beyond it come from the literature on deformable linear objects: a wire mask thinned to centre lines (Zhang & Suen, 1984), followed with the least bending where wires cross (Choi et al., 2023), then learned instance segmentation of wires (Caporali et al., 2022a, 2022b). Each step is measured against the baseline as trace coverage and trace accuracy (`ml/eval`).
 
 ## Architecture
 
@@ -125,7 +164,9 @@ flowchart TB
         D2["CableRecord<br/>confirmed first end"]
         D3["RuleChecker<br/>swap, move, connect, remove"]
         D4["VerdictCombiner<br/>green, red or amber"]
-        D1 ~~~ D2 ~~~ D3 ~~~ D4
+        D5["ZoneCheck<br/>planned module?"]
+        D6["BundleCheck<br/>this cable's wires?"]
+        D1 ~~~ D2 ~~~ D3 ~~~ D4 ~~~ D5 ~~~ D6
     end
     pres --> F
     F --> svc
@@ -139,13 +180,15 @@ The flow also calls the domain directly: it builds the record, runs the rule che
 
 | Part | Folder | Responsibility | Status |
 | --- | --- | --- | --- |
-| `AxisCatalog` | `Verification/` | Pins, pairings, symptoms and sources from the manuals; one `UsageRule` per label usage | Real |
+| `AxisCatalog` | `Verification/` | Devices and their modules, wiring templates per module kind, symptoms and sources from the manuals; `Resolve` binds a label's plan to a `UsageRule` | Real |
 | `CableRecord`, readings | `Verification/` | Confirmed first-end colours; expected colour per controller pin | Real |
 | `RuleChecker` | `Verification/` | Differences → swap / move / connect / remove, with why, symptom and whether the device end can do it | Real, tested |
 | `VerdictCombiner` | `Verification/` | Rules × second opinion × confidence → green / red / amber | Real, tested |
-| `CableLabel`, `ILabelScanner` | `Labels/` | Parses `IA\|D1\|READER\|C01\|DEV`; finds the label | Parser real; `QrLabelScanner` stub (ZXing, untested) |
+| `ZoneCheck` | `Verification/` | Is the cable in the module its label names? Words for "move the cable to Reader 1" | Real, tested; needs the reader's survey (none in WoZ) |
+| `BundleCheck` | `Verification/` | Do the wires being checked run back to the scanned label? Words for "the wire on 12V is from another cable" | Real, tested; needs the reader's traces (none in WoZ) |
+| `CableLabel`, `ILabelScanner` | `Labels/` | Parses `IA\|C01\|D1\|A1610.READER2\|A4020E\|CTRL` (the plan and the end); finds the label | Parser real; `QrLabelScanner` stub (ZXing, untested) |
 | `ICameraView` | `AR/` | Camera image, frames for the readers, anchors per terminal, end snapshots | Photos in WoZ; `ArCameraView` webcam stub, AR Foundation next |
-| `IWireReader` | `Detection/` | Colour per terminal with confidence and image position (layer 1) | Scripted; `PerceptionWireReader` → Python service |
+| `IWireReader` | `Detection/` | Colour per terminal with confidence and image position (layer 1); where each wire runs back to (given the scanned label); at the controller also the survey of the other modules | Scripted; `PerceptionWireReader` → Python service (baseline tracer in `tracing.py`) |
 | `ISecondOpinion` | `AI/` | Independent match / mismatch per pin (layer 3) | Scripted; `PerceptionSecondOpinion` → Python service |
 | `IRecordStore`, `SessionLog` | `Records/` | Keeps both ends per cable key; CSV event log | In memory (WoZ); `JsonRecordStore` (live) |
 | `UiKit`, `ArOverlay` | `UI/` | Theme, markers, non-overlapping tags, fix arrows | Real |
@@ -156,8 +199,8 @@ The flow also calls the domain directly: it builds the record, runs the rule che
 
 1. `ICameraView` → `ArCameraView` on AR Foundation/ARCore, handing each CPU image to the readers as a `CameraFrame` (B).
 2. `ILabelScanner` → `QrLabelScanner`, QR decoding of the camera frame with ZXing.Net (A).
-3. Terminal positions → returned by the wire reader as image points (feature matching to a reference photo of the board), then anchored in the world by the camera view, so markers stay on the terminals while the phone moves (A, B).
-4. `IWireReader` → `PerceptionWireReader`: crops beside each terminal read by the perception service (classical CIELAB colour, then a VLM on the crops), with calibrated confidence (A).
+3. Terminal positions → returned by the wire reader as image points (feature matching to a reference photo of the whole board, which places every module), then anchored in the world by the camera view, so markers stay on the terminals while the phone moves (A, B).
+4. `IWireReader` → `PerceptionWireReader`: crops beside each terminal read by the perception service (classical CIELAB colour, then a VLM on the crops), with calibrated confidence, plus the survey of the controller's other modules for the zone check (A).
 5. `ISecondOpinion` → `PerceptionSecondOpinion`: a separate call with both ends' crops and the pairing rule, never the rule check's answer (A).
 6. `IRecordStore` → `JsonRecordStore`, records that survive an app restart (C).
 
@@ -169,6 +212,8 @@ The AI only perceives; rules decide; a second, independent AI call can only lowe
 
 | Layer | Does | Code | Wizard of Oz? |
 | --- | --- | --- | --- |
+| 0. Zone | At the controller: is the cable in the module its label names? (section above) | `ZoneCheck` | skipped (no survey) |
+| 0. Bundle | At either end: do the wires run back to the scanned label? (section above) | `BundleCheck` | skipped (no traces) |
 | 1. Reading | Colour (or none) on each terminal, with a confidence | `IWireReader` | scripted |
 | 2. Rules | Compares the second end with the first-end record through the pairing rule; turns differences into fixes | `RuleChecker` | real |
 | 3. Second opinion | Separate AI call on both crops plus the rule: match / mismatch per pin | `ISecondOpinion` | scripted |
@@ -193,7 +238,7 @@ The AI only perceives; rules decide; a second, independent AI call can only lowe
 
 Each fix carries a *why* built from the manual's pin functions and a *symptom* (data fault: reader LED keeps flashing red; power fault: reader does not power up, fix before powering). A fix that touches pin 1 or 2 adds "do this with the power off". Every pin that is wrong points to exactly one fix, so one red mark never shows two contradicting instructions. `RuleCheck.FixableAtDevice` is true only when every fix can be done at the reader; then an installer standing there fixes it there, otherwise all fixes are shown at the controller.
 
-The logic is pure C# with no Unity dependency and makes no assumption about which fault occurred. `tools/domain-tests` checks both demonstration faults, reversed power, a missing wire, a foreign wire, a three-wire rotation, which fixes the reader end can do, the verdict table, label parsing and pairing, the record store and the log format; all pass.
+The logic is pure C# with no Unity dependency and makes no assumption about which fault occurred. `tools/domain-tests` checks both demonstration faults, reversed power, a missing wire, a foreign wire, a three-wire rotation, which fixes the reader end can do, the verdict table, label parsing, plans and pairing (including misprinted pairs), binding a plan to Reader 1 or Reader 2, every case of the zone check and of the bundle check (including a wire of another cable that the colour check alone passes), the record store and the log format; all pass. `ml/tests` checks the baseline tracer on a synthetic picture with two labelled bundles whose red wires end side by side.
 
 ## Low cognitive load: scan first, either end
 
@@ -202,10 +247,12 @@ The installer needs to know nothing before starting: the cable label carries the
 | Decision | What the app does | Grounding |
 | --- | --- | --- |
 | Scan first, no job list | Home has one action, "Scan a cable"; nothing to read or choose before the camera opens. | Fewer choices, faster decisions (Hick, 1952); remove extraneous load (Sweller, van Merriënboer & Paas, 2019). |
-| The label knows | The label carries the cable key and its end; the app derives the cable's name, its wiring rule and where the other end is. | Knowledge in the world, not in the head (Norman, 2013); recognition rather than recall (Nielsen, 1994). |
+| The label knows | The label carries the cable's plan (controller module → device) and its end; the app derives the cable's name, its wiring rule, the module to check and where the other end is. | Knowledge in the world, not in the head (Norman, 2013); recognition rather than recall (Nielsen, 1994). |
+| Right wires first | At either end, a wire that runs back to another cable's label is marked red on the camera view ("other cable") and named before any pin is judged; "They are this cable's" lets the installer overrule it. | Help users recognize, diagnose and recover from errors (Nielsen, 1994); the installer keeps the last word over the automation (Shneiderman, 2020). |
+| Right module first | At the controller the app checks that the cable is in the module its label names before reading pins; if not, it says "Move the cable to Reader 1" and marks both modules in the camera view, instead of listing missing wires. | Help users recognize, diagnose and recover from errors (Nielsen, 1994); identical blocks side by side invite description-similarity slips (Norman, 1981; 2013). |
 | Either end first | The installer starts wherever they are; the second scan pairs the ends by the shared key, in either order. | Fits the installer's real path; no mode to pick, so no mode error (Norman, 2013). |
 | One thing at a time | Each end shows only its own wires, then one question: save, fix, or decide the amber wire. | Working memory holds about four chunks (Cowan, 2001). |
-| Where to go next | After the first end, the app names the other end ("AXIS A1610 · Reader 1 block") and shows what was saved. | Offloads the plan to the device instead of memory (Cowan, 2001). |
+| Where to go next | After the first end, the app names the other end from the label's plan ("AXIS A1610 · Reader 2 block") and shows what was saved. | Offloads the plan to the device instead of memory (Cowan, 2001). |
 | Verdict where you stand | The check runs at the second end and is drawn on the terminals in hand; the other end is a linked snapshot. | Split attention and spatial contiguity (Chandler & Sweller, 1991); AR instructions lowered mental workload in assembly (Tang et al., 2003). |
 | One place to fix | Fixes are drawn where the installer stands, with arrows between the terminals or pins there; a walk back happens only when the controller is the one place the fix can be done. | Consistency (Nielsen, 1994); the A1610 defines each pin, and a wrong-pin fault can only be fixed there. |
 | Interruptions are safe | "Finish later" keeps the cable on Home under "Waiting for the other end"; scanning any label resumes. | Resuming a suspended goal needs a cue (Altmann & Trafton, 2002). |
@@ -244,7 +291,9 @@ The app is already instrumented for the user study. "Save report" writes a time-
 | --- | --- |
 | `start`, `verified` | Time to a verified installation |
 | `reader_read`, `controller_read`, `wire_edit`, `wire_confirm`, `rescan`, `reader_saved`, `controller_saved` | How often the reading at either end needed the installer |
-| `label_missing`, `label_found`, `label_unreadable`, `label_other_cable`, `label_same_end` | Whether the label step costs time, and which pairing mistakes happen |
+| `label_missing`, `label_found`, `label_unreadable`, `label_other_cable`, `label_same_end`, `label_plan_mismatch`, `label_unknown_plan` | Whether the label step costs time, and which pairing and printing mistakes happen |
+| `zone`, `zone_dismissed` | How often a cable sits in another module than planned, and how often the installer answers "Not this cable" |
+| `bundle`, `bundle_dismissed` | How often a wire of another cable lands on the block, and how often the installer overrules the trace |
 | `check`, `recheck`, `recheck_here`, `recheck_result` | Faults shown, the fixes given, where they were fixed and how many rechecks it took |
 | `pin_detail`, `snapshot_open` | Whether installers look at the reasons and the linked snapshot |
 | `amber_confirmed`, `amber_rejected` | Overrides of the automation, for calibrated vs. misplaced trust |
@@ -254,15 +303,17 @@ The app is already instrumented for the user study. "Save report" writes a time-
 
 ## Assumptions
 
-The MVP rests on seven assumptions about the installation. Each limits what the results can claim, and each is a question for Axis.
+The MVP rests on nine assumptions about the installation. Each limits what the results can claim, and each is a question for Axis.
 
-1. **Labelled cables.** Every cable carries a QR label at both ends that says which cable it is and which end (DEV or CTRL). A missing label is asked for, never guessed, because the label is the only link between the two ends.
+1. **Labelled cables, and the label is the plan.** Every cable carries a QR label at both ends with its id, its plan (from which controller module to which device module) and the end it sits on (CTRL or DEV). The app checks the installation against that plan, so a wrongly printed label means checking against the wrong plan; two labels of one cable that disagree are caught. A missing label is asked for, never guessed, because the label is the only link between the two ends.
 2. **Distinct colours within a cable.** The wires of one cable have different colours; different cables may share colours.
-3. **One use case.** An AXIS A4020-E reader on the A1610's Reader 1 block, OSDP over half-duplex RS-485 on pins 3 and 4, powered by the controller (AXIS A1610 and A4020-E user manuals).
+3. **One use case.** An AXIS A4020-E reader on one of the A1610's reader ports (Reader 1 or Reader 2, as the label plans), OSDP over half-duplex RS-485 on pins 3 and 4, powered by the controller (AXIS A1610 and A4020-E user manuals).
 4. **Ends far apart.** The two ends may be checked at different times: one end is recorded, the other is compared with it.
 5. **Powered controller.** The LED symptoms in the fix cards assume the controller has power; the lent bench has none.
 6. **Starting threshold.** Readings below 0.80 confidence turn amber; the value is set from the accuracy test.
 7. **Wire colours carry no meaning of their own.** Neither Axis manual assigns wire colours: the A4020-E wiring table and the A1610 Reader connector name terminals and pins only. OSDP over RS-485 has no common colour code either; the widespread red/black/green/white scheme covers Wiegand readers with factory pigtails (Allegion knowledge base), and the public description of the SIA Wiegand standard (SIA AC-01-1996.10) does not mention colours. The lent bench itself has orange on +12 V. A colour therefore only tells the wires of one cable apart, and a wiring is correct when both ends agree and the controller end matches the A1610 pin table. A consequence is that a swap among the cable's own wires can be fixed at either end, so the app fixes it where the installer stands. A per-site colour convention could be added later as a setting.
+8. **Modules in one view.** The zone check sees only the modules in the same camera frame as the planned one. A cable on a module outside the frame is reported by the pin check (wires to connect), not as a wrong module.
+9. **Label beside the fan-out.** The label is fixed where the cable's wires leave the cable or bundle (on the bench, a flag label around the loose wires), in the same picture as the terminals, so each wire can be followed back to it. Otherwise the traces are "unknown" and the bundle check stays silent.
 
 ## Limitations and open questions
 
@@ -273,18 +324,26 @@ The MVP rests on seven assumptions about the installation. Each limits what the 
 - [ ] **Confidence threshold.** 0.80 is a starting value; set it from the internal accuracy test of the real wire reader.
 - [ ] **Second-opinion independence.** Two calls to the same VLM may share blind spots; measure how often layer 3 catches a layer-1 misreading (Tong et al., 2024, on fine visual detail).
 - [ ] **Distinct colours.** The record check blocks two terminals with one colour; twisted-pair cable with striped pairs may break this assumption.
-- [ ] **Questions for Axis.** Do installers label both ends? Do sites use a wire-colour convention for OSDP readers? Can the app read reader status from the A1610 (for example the reader's online state) as a second source of truth? May installation photos go to a cloud AI service?
+- [ ] **Tracing in clutter.** The baseline tracer gives "unknown" when same-coloured wires touch or a wire's colour is close to the board; measure trace coverage on tangled bench photos before relying on it, and move to centre lines with crossing resolution if coverage is low.
+- [ ] **Zone check with identical cables.** Colours never prove which cable sits in a module; with identical cables the zone hint asks rather than claims. A cable split across two modules is reported by the pin check (missing wires), not as a wrong module.
+- [ ] **Where labels come from.** The label is the plan, so labels should be printed from the site's plan, not written by hand on site. Ask Axis which planning tool holds the port assignment.
+- [ ] **Questions for Axis.** Do installers label both ends? Do sites use a wire-colour convention for OSDP readers? Can the app read reader status from the A1610 (for example the reader's online state) as a second source of truth? Can the A1610's configuration (which reader port is set up for which door) confirm the label's plan? May installation photos go to a cloud AI service?
 
 ## References
 
+- Adams, R., & Bischof, L. (1994). Seeded region growing. *IEEE Transactions on Pattern Analysis and Machine Intelligence*, 16(6), 641–647. [doi:10.1109/34.295913](https://doi.org/10.1109/34.295913)
 - Allegion. Is there a listing showing the functions of the wires to the wall-mounted readers? (knowledge base; Wiegand colour scheme, pink/tan RS-485 lines). [kc.allegion.com](https://kc.allegion.com/kb/article/is-there-a-listing-showing-the-functions-of-the-wires-to-the-wall-mounted-readers)
 - Altmann, E. M., & Trafton, J. G. (2002). Memory for goals: An activation-based model. *Cognitive Science*, 26(1), 39–83. [doi:10.1207/s15516709cog2601_2](https://doi.org/10.1207/s15516709cog2601_2)
 - Amershi, S., Weld, D., Vorvoreanu, M., Fourney, A., Nushi, B., Collisson, P., Suh, J., Iqbal, S., Bennett, P. N., Inkpen, K., Teevan, J., Kikin-Gil, R., & Horvitz, E. (2019). Guidelines for human-AI interaction. *Proc. CHI 2019*. ACM. [Summary of the 18 guidelines](https://www.microsoft.com/en-us/research/blog/guidelines-for-human-ai-interaction-design/)
+- ANSI/TIA-606-C (2017). *Administration Standard for Telecommunications Infrastructure*. Telecommunications Industry Association. Labels at both ends of every cable; summary in [Cabling Installation & Maintenance](https://www.cablinginstall.com/cable/article/14035166/tia606c-standard-requirements-for-cableplant-administration).
 - Axis Communications. AXIS A1610 Network Door Controller user manual. [help.axis.com](https://help.axis.com/en-us/axis-a1610)
 - Axis Communications. AXIS A1610 Network Door Controller datasheet. [axis.com](https://www.axis.com/dam/public/81/33/47/datasheet-axis-a1610-network-door-controller-en-US-386201.pdf)
 - Axis Communications. AXIS A4020-E Reader user manual. [help.axis.com](https://help.axis.com/en-us/axis-a4020-e)
 - Bell, B., Feiner, S., & Höllerer, T. (2001). View management for virtual and augmented reality. *Proc. UIST 2001*. ACM. [doi:10.1145/502348.502363](https://doi.org/10.1145/502348.502363)
+- Caporali, A., Zanella, R., De Gregorio, D., & Palli, G. (2022a). Ariadne+: Deep learning-based augmented framework for the instance segmentation of wires. *IEEE Transactions on Industrial Informatics*, 18(12), 8607–8617. [doi:10.1109/TII.2022.3154477](https://doi.org/10.1109/TII.2022.3154477)
+- Caporali, A., Galassi, K., Zanella, R., & Palli, G. (2022b). FASTDLO: Fast deformable linear objects instance segmentation. *IEEE Robotics and Automation Letters*, 7(4), 9075–9082. [doi:10.1109/LRA.2022.3189791](https://doi.org/10.1109/LRA.2022.3189791)
 - Chandler, P., & Sweller, J. (1991). Cognitive load theory and the format of instruction. *Cognition and Instruction*, 8(4), 293–332. [doi:10.1207/s1532690xci0804_2](https://doi.org/10.1207/s1532690xci0804_2)
+- Choi, A., Tong, D., Park, B., Terzopoulos, D., Joo, J., & Jawed, M. K. (2023). mBEST: Realtime deformable linear object detection through minimal bending energy skeleton pixel traversals. *IEEE Robotics and Automation Letters*. [doi:10.1109/LRA.2023.3290419](https://doi.org/10.1109/LRA.2023.3290419)
 - Cowan, N. (2001). The magical number 4 in short-term memory: A reconsideration of mental storage capacity. *Behavioral and Brain Sciences*, 24(1), 87–114. [doi:10.1017/S0140525X01003922](https://doi.org/10.1017/S0140525X01003922)
 - Dahlbäck, N., Jönsson, A., & Ahrenberg, L. (1993). Wizard of Oz studies: Why and how. *Proc. IUI 1993*. ACM. [doi:10.1145/169891.169968](https://doi.org/10.1145/169891.169968)
 - Fitts, P. M., & Seeger, C. M. (1953). S-R compatibility: Spatial characteristics of stimulus and response codes. *Journal of Experimental Psychology*, 46(3), 199–210.
@@ -298,6 +357,7 @@ The MVP rests on seven assumptions about the installation. Each limits what the 
 - Lee, J. D., & See, K. A. (2004). Trust in automation: Designing for appropriate reliance. *Human Factors*, 46(1), 50–80.
 - Martin, R. C. (2017). *Clean Architecture: A Craftsman's Guide to Software Structure and Design*. Prentice Hall.
 - Nielsen, J. (1994). Enhancing the explanatory power of usability heuristics. *Proc. CHI 1994*, 152–158. ACM.
+- Norman, D. A. (1981). Categorization of action slips. *Psychological Review*, 88(1), 1–15. [doi:10.1037/0033-295X.88.1.1](https://doi.org/10.1037/0033-295X.88.1.1)
 - Norman, D. A. (2013). *The Design of Everyday Things* (revised ed.). Basic Books.
 - Okabe, M., & Ito, K. (2008). Color Universal Design (CUD): How to make figures and presentations that are friendly to colorblind people. [jfly.uni-koeln.de](https://jfly.uni-koeln.de/color)
 - Parasuraman, R., & Riley, V. (1997). Humans and automation: Use, misuse, disuse, abuse. *Human Factors*, 39(2), 230–253.
@@ -310,3 +370,4 @@ The MVP rests on seven assumptions about the installation. Each limits what the 
 - Tang, A., Owen, C., Biocca, F., & Mou, W. (2003). Comparative effectiveness of augmented reality in object assembly. *Proc. CHI 2003*. ACM.
 - Tong, S., Liu, Z., Zhai, Y., Ma, Y., LeCun, Y., & Xie, S. (2024). Eyes wide shut? Exploring the visual shortcomings of multimodal LLMs. *Proc. CVPR 2024*.
 - W3C (2023). Web Content Accessibility Guidelines (WCAG) 2.2, Success Criterion 1.4.1 Use of Color. [w3.org](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color)
+- Zhang, T. Y., & Suen, C. Y. (1984). A fast parallel algorithm for thinning digital patterns. *Communications of the ACM*, 27(3), 236–239. [doi:10.1145/357994.358023](https://doi.org/10.1145/357994.358023)

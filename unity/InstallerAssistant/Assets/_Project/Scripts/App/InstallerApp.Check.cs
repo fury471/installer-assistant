@@ -22,6 +22,11 @@ namespace InstallerAssistant.App
     /// Fixes are shown where the installer stands when that end can do them (a swap among the cable's own wires);
     /// a fix that needs the controller (a wire on an unused pin, an extra or a loose wire) sends them there.
     ///
+    /// At the controller, the zone check runs before the pins: the label names the module the cable must land on
+    /// (e.g. Reader 2), and when that module is empty but another holds wires, the app says "move the cable to
+    /// Reader 2" instead of listing missing wires (ZoneCheck). Then, at either end, the bundle check: a wire the
+    /// reader traced to another cable (not back to the scanned label) is shown before any pin is judged (BundleCheck).
+    ///
     /// The camera image comes from ICameraView (a photo in the Wizard of Oz, the AR camera live). Markers are
     /// placed where the readers found the terminals: the app anchors each position in the view and asks the view
     /// every frame where it is now, so markers stay on the terminals while the phone moves.
@@ -43,6 +48,13 @@ namespace InstallerAssistant.App
         PinMarker tapped;
         Vector2 labelExtent;
 
+        // zone check: is the cable in the module its label names? bundle check: do the wires belong to the label?
+        ZoneResult zone;
+        BundleResult bundle;
+        bool zoneDismissed, zoneShown, pendingFirstCheck, bundleDismissed;
+        RectTransform zoneFrom, zoneTo;
+        Coroutine aiProgress;
+
         RectTransform camRoot, markersRT, scanLine, qrBox, missingGuide;
         TextMeshProUGUI titleText, stepLine, instructionText, sheetTitle, sheetSub, qrCaption;
         Image instructionDot;
@@ -55,6 +67,7 @@ namespace InstallerAssistant.App
             arrows.Clear(); marks.Clear(); snapshotDots.Clear(); pulseRings.Clear();
             if (camRoot != null && view != null) view.Detach();
             camRoot = markersRT = scanLine = qrBox = missingGuide = null;
+            zoneFrom = zoneTo = null; zoneShown = false;
             sheet = sheetContent = sheetButtons = snapshot = snapshotHighlight = null;
             qrCaption = null;
             modalOpen = false; snapshotExpanded = false; labelBoxOn = false;
@@ -66,26 +79,28 @@ namespace InstallerAssistant.App
             cable = null; current = null; record = null; ctrlRecord = null;
             check = null; results = null;
             readColours = null; readConfidence = null; readEdited = null;
+            zone = null; zoneDismissed = false; zoneShown = false; pendingFirstCheck = false;
+            bundle = null; bundleDismissed = false;
         }
 
         // ------------------------------------------------------------------ words the app derives from the label
 
         static CableEnd Other(CableEnd e) { return e == CableEnd.Controller ? CableEnd.Device : CableEnd.Controller; }
-        string DeviceWord { get { return cable != null ? cable.Usage.ToLowerInvariant() : "device"; } }
+        string DeviceWord { get { return cable != null ? rule.Usage.ToLowerInvariant() : "device"; } }
         string EndWord(CableEnd e) { return e == CableEnd.Controller ? "controller" : DeviceWord; }
-        string EndTitle(CableEnd e) { return e == CableEnd.Unknown ? "Scan a cable" : EndTitleOf(cable, e); }
-        static string EndTitleOf(CableLabel label, CableEnd e)
+        string EndTitle(CableEnd e) { return e == CableEnd.Unknown ? "Scan a cable" : EndTitleOf(cable != null ? rule : null, e); }
+        static string EndTitleOf(UsageRule r, CableEnd e)
         {
             if (e == CableEnd.Controller) return "Controller end";
-            string w = label != null ? label.Usage.ToLowerInvariant() : "device";
+            string w = r != null ? r.Usage.ToLowerInvariant() : "device";
             return char.ToUpperInvariant(w[0]) + w.Substring(1) + " end";
         }
-        string CableTitle { get { return cable != null ? cable.DoorName + " " + DeviceWord : "this cable"; } }
-        /// <summary>Where the given end is, from the label and the wiring rule: the installer never has to look it up.</summary>
+        string CableTitle { get { return cable != null ? TitleOf(cable, rule) : "this cable"; } }
+        /// <summary>Where the given end is, from the label's plan and the wiring rule: the installer never has to look it up.</summary>
         string WhereIs(CableEnd e)
         {
             return e == CableEnd.Controller ? Short(rule.ControllerModel) + " · " + rule.Connector.Name + " block"
-                                            : cable.DoorName + " · " + Short(rule.DeviceModel) + " " + DeviceWord;
+                                            : (cable.HasDoor ? cable.DoorName + " · " : "") + Short(rule.DeviceModel) + " " + DeviceWord;
         }
         /// <summary>The end the installer most likely is at when they press "Scan a cable" (the label decides).</summary>
         CableEnd NextEnd()
@@ -187,6 +202,8 @@ namespace InstallerAssistant.App
         IEnumerator Arrive(CableEnd expected, CableLabel pairWith, string step, string why, Action<CableEnd> done)
         {
             readColours = null; readConfidence = null; readEdited = null;   // a new end: nothing read here yet
+            zone = null; zoneDismissed = false; zoneShown = false;
+            bundle = null; bundleDismissed = false;
             foreach (var a in arrows) a.Destroy();
             arrows.Clear();
             ClearMarks();
@@ -254,6 +271,17 @@ namespace InstallerAssistant.App
                 var label = scan.Label;
                 CableEnd end = label.End != CableEnd.Unknown ? label.End
                              : pairWith != null && pairWith.End != CableEnd.Unknown ? Other(pairWith.End) : expected;
+                if (pairWith != null && pairWith.SameCableOtherPlan(label))
+                {
+                    // both labels name this cable but plan different modules: the app can't know which plan is right
+                    log.Add("label_plan_mismatch", label.Route + " vs " + pairWith.Route);
+                    Instruction("The two labels don't match", Warn);
+                    Sheet("The two labels don't match", "Both labels say " + label.Display + ", but this one says " + label.Route + " and the other end's says " +
+                        pairWith.Route + ". Reprint the labels so both ends carry the same plan, then scan again.");
+                    Btn(sheetButtons, "Scan again", ButtonKind.Primary, () => clicked = "again");
+                    yield return WaitClick();
+                    continue;
+                }
                 if (pairWith != null && label.Key != pairWith.Key)
                 {
                     log.Add("label_other_cable", label.Display);
@@ -273,12 +301,14 @@ namespace InstallerAssistant.App
                     yield return WaitClick();
                     continue;
                 }
-                var r = AxisCatalog.Lookup(label.Usage);
+                string problem;
+                var r = AxisCatalog.Resolve(label, out problem);
                 if (r == null)
                 {
-                    log.Add("label_unknown_usage", label.Display);
-                    Instruction("Unknown cable type", Warn);
-                    Sheet("Unknown cable type", "The app has no wiring rule for \"" + label.Usage + "\" (label " + label.Display + ").");
+                    // the label's plan names modules the app has no rule for: it never guesses one
+                    log.Add("label_unknown_plan", label.Display + " · " + label.Route);
+                    Instruction("Unknown cable plan", Warn);
+                    Sheet("The app can't check this cable", problem + " (label " + label.Display + ", " + label.Route + ")");
                     Btn(sheetButtons, "Scan again", ButtonKind.Primary, () => clicked = "again");
                     yield return WaitClick();
                     continue;
@@ -291,7 +321,7 @@ namespace InstallerAssistant.App
                     Instruction("Which end is this?", Accent);
                     Sheet("Which end is this?", "The label of " + label.Display + " does not say. Choose the end you are at.");
                     Btn(sheetButtons, "Controller end", ButtonKind.Secondary, () => clicked = "ctrl");
-                    Btn(sheetButtons, EndTitleOf(label, CableEnd.Device), ButtonKind.Primary, () => clicked = "dev");
+                    Btn(sheetButtons, EndTitleOf(r, CableEnd.Device), ButtonKind.Primary, () => clicked = "dev");
                     yield return WaitClick();
                     end = clicked == "ctrl" ? CableEnd.Controller : CableEnd.Device;
                 }
@@ -304,7 +334,7 @@ namespace InstallerAssistant.App
                 ShowLabelBox(scan, frame);
                 yield return Wait(0.25f);
                 Instruction("Label found · hold steady", Ok);
-                log.Add("label_found", cable.Display + " · " + CableLabel.EndCode(end) +
+                log.Add("label_found", cable.Display + " · " + cable.Route + " · " + CableLabel.EndCode(end) +
                     "; saved=" + (record != null ? "DEV" : "") + (ctrlRecord != null ? "CTRL" : ""));
                 yield return Wait(0.9f);
                 labelBoxOn = false;
@@ -390,6 +420,20 @@ namespace InstallerAssistant.App
                     if (readColours[marks.IndexOf(m)] != WireColours.None) yield return ColourPicker(m);
                     continue;
                 }
+                if (clicked == "zone_ignore")
+                {
+                    zoneDismissed = true;
+                    zoneShown = false;
+                    log.Add("zone_dismissed", zone != null && zone.Found != null ? zone.Found.Id : "");
+                    continue;
+                }
+                if (clicked == "bundle_ignore")
+                {
+                    bundleDismissed = true;
+                    log.Add("bundle_dismissed", BundleNames());
+                    for (int i = 0; i < marks.Count; i++) SetReadMark(i);   // back to the colour marks
+                    continue;
+                }
                 if (clicked == "rescan")
                 {
                     log.Add("rescan");
@@ -420,10 +464,12 @@ namespace InstallerAssistant.App
             var end = atController ? CableEnd.Controller : CableEnd.Device;
             foreach (var m in marks) if (m.State != Mark.Edited) m.Set(atController ? Mark.Hidden : Mark.Reading, m.Colour, null);
             int[] colours = null; float[] conf = null; ImagePoint[] where = null;
+            ControllerReading crd = null;
+            DeviceEndReading drd = null;
             var frame = view.Latest;
             scanLine.gameObject.SetActive(true);
-            if (atController) StartCoroutine(wires.ReadControllerEnd(rule, frame, r => { where = r.Positions; conf = r.Confidence; colours = r.Colours; }));
-            else StartCoroutine(wires.ReadDeviceEnd(rule, frame, r => { where = r.Positions; conf = r.Confidence; colours = r.Colours; }));
+            if (atController) StartCoroutine(wires.ReadControllerEnd(rule, cable, frame, r => { crd = r; where = r.Positions; conf = r.Confidence; colours = r.Colours; }));
+            else StartCoroutine(wires.ReadDeviceEnd(rule, cable, frame, r => { drd = r; where = r.Positions; conf = r.Confidence; colours = r.Colours; }));
             yield return ProgressUntil(bar, () => colours != null, 2.4f);
             scanLine.gameObject.SetActive(false);
 
@@ -440,6 +486,17 @@ namespace InstallerAssistant.App
                 SetReadMark(i);
             }
             log.Add(atController ? "controller_read" : "reader_read", "frame=" + frame.Id + "; unsure=" + marks.FindAll(x => x.State == Mark.Check).Count);
+            if (atController)
+            {
+                // first end at the controller: no device end to compare colours with, so the zone check can only ask
+                zone = ZoneCheck.Check(rule, crd, record, ClaimedByOthers());
+                LogZone();
+                ShowZone(crd, frame);
+            }
+            // then: do the wires read here run back to this cable's label?
+            bundle = atController ? BundleCheck.Check(rule, cable, crd) : BundleCheck.Check(rule, cable, drd);
+            LogBundle();
+            if (BundleOpen()) MarkForeign(readColours);
         }
 
         /// <summary>
@@ -495,6 +552,8 @@ namespace InstallerAssistant.App
             var shown = Shown();
             var unsure = shown.FindAll(x => x.State == Mark.Check);
             string here = EndWord(atController ? CableEnd.Controller : CableEnd.Device);
+            if (atController && ZoneOpen()) { ZoneSheet(false); return; }
+            if (BundleOpen()) { BundleSheet(false); return; }
             if (shown.Count == 0)
             {
                 // nothing read: the camera was not on the terminals, or the reader failed
@@ -649,7 +708,7 @@ namespace InstallerAssistant.App
             ControllerReading rd = null;
             var frame = view.Latest;
             scanLine.gameObject.SetActive(true);
-            StartCoroutine(wires.ReadControllerEnd(rule, frame, r => rd = r));
+            StartCoroutine(wires.ReadControllerEnd(rule, cable, frame, r => rd = r));
             yield return ProgressUntil(bar, () => rd != null, 2.2f);
             scanLine.gameObject.SetActive(false);
             AnchorMarks(CableEnd.Controller, rd.Positions, frame);
@@ -666,6 +725,21 @@ namespace InstallerAssistant.App
                     var m = tapped; tapped = null;
                     var r = ResultFor(m.Id);
                     if (r != null) yield return Detail(r);
+                    continue;
+                }
+                if (clicked == "zone_ignore")
+                {
+                    zoneDismissed = true;
+                    zoneShown = false;
+                    log.Add("zone_dismissed", zone != null && zone.Found != null ? zone.Found.Id : "");
+                    yield return RunCheck(false);
+                    continue;
+                }
+                if (clicked == "bundle_ignore")
+                {
+                    bundleDismissed = true;
+                    log.Add("bundle_dismissed", BundleNames());
+                    yield return RunCheck(false);
                     continue;
                 }
                 if (clicked == "recheck")
@@ -697,16 +771,45 @@ namespace InstallerAssistant.App
             Opinion[] ops = null;
             var frame = view.Latest;
             scanLine.gameObject.SetActive(true);
-            StartCoroutine(wires.ReadControllerEnd(rule, frame, r => rd = r));
+            StartCoroutine(wires.ReadControllerEnd(rule, cable, frame, r => rd = r));
             if (useSecondOpinion)
             {
                 // layer 3 runs in parallel and independently: it never sees layer 1's reading
                 StartCoroutine(secondOpinion.Compare(record, current.DeviceFrame, frame, o => ops = o));
-                StartCoroutine(ProgressUntil(aiBar, () => ops != null, 2.8f));
+                aiProgress = StartCoroutine(ProgressUntil(aiBar, () => ops != null, 2.8f));
             }
             yield return ProgressUntil(readBar, () => rd != null, 2.2f);
             scanLine.gameObject.SetActive(false);
+
+            // the zone check first: is the cable in the module its label names? If not, pins mean nothing yet
+            zone = ZoneCheck.Check(rule, rd, record, ClaimedByOthers());
+            LogZone();
+            if (ZoneOpen())
+            {
+                if (aiProgress != null) StopCoroutine(aiProgress);
+                foreach (var m in marks) m.Set(Mark.Hidden, -1, null);
+                results = null; check = null;
+                pendingFirstCheck = pendingFirstCheck || first;
+                ShowZone(rd, frame);
+                yield break;
+            }
+            zoneShown = false;
             AnchorMarks(CableEnd.Controller, rd.Positions, frame);
+
+            // then the bundle check: a wire traced to another cable is shown before any pin is judged
+            bundle = BundleCheck.Check(rule, cable, rd);
+            LogBundle();
+            if (BundleOpen())
+            {
+                if (aiProgress != null) StopCoroutine(aiProgress);
+                foreach (var m in marks) m.Set(Mark.Hidden, -1, null);
+                MarkForeign(rd.Colours);
+                results = null; check = null;
+                pendingFirstCheck = pendingFirstCheck || first;
+                yield break;
+            }
+            first = first || pendingFirstCheck;
+            pendingFirstCheck = false;
             TakeSnapshot(CableEnd.Controller, rd.Positions, frame);
             // the store keeps the controller end as it is now (after a fix, the fixed wiring)
             ctrlRecord = new ControllerRecord(cable.AtEnd(CableEnd.Controller), rule, (int[])rd.Colours.Clone(), (float[])rd.Confidence.Clone(),
@@ -815,6 +918,8 @@ namespace InstallerAssistant.App
 
         void ControllerResultsSheet()
         {
+            if (ZoneOpen()) { ZoneSheet(true); return; }
+            if (BundleOpen()) { BundleSheet(true); return; }
             int wrong = Count(Verdict.Wrong), amber = Count(Verdict.Check);
             var fixes = ActiveFixes();
             string title, sub;
@@ -1255,6 +1360,10 @@ namespace InstallerAssistant.App
             Txt(mg, "Attach the label here", Small, WarnInk, Face.Semi);
             missingGuide.gameObject.SetActive(false);
 
+            // zone hints, anchored on the modules: where the cable seems to be, and where its label says it goes
+            zoneFrom = ZonePill("ZoneFrom", WarnSoft, WarnInk);
+            zoneTo = ZonePill("ZoneTo", AccentSoft, Accent);
+
             BuildSheet(camRoot);
         }
 
@@ -1419,6 +1528,8 @@ namespace InstallerAssistant.App
         {
             if (results != null) return "Red: fix it as shown. Amber: tap and decide. Green: correct.";
             if (cable == null) return "Point the phone at the cable label.";
+            if (ZoneOpen()) return "Move the cable to " + zone.Expected.Name + ", the module its label names, or tap \"Not this cable\".";
+            if (BundleOpen()) return "Red: a wire that runs to another cable, not to this cable's label. Take it off, or tap \"They are this cable's\".";
             if (atController) return "Point the phone at the " + rule.Connector.Name + " block and the cable label.";
             return "Point the phone at the " + DeviceWord + "'s terminals and the cable label.";
         }
@@ -1530,6 +1641,128 @@ namespace InstallerAssistant.App
         {
             clicked = null; tapped = null;
             while ((clicked == null || clicked == "dismiss") && tapped == null) yield return null;
+        }
+
+        // ================================================================== zone check
+
+        /// <summary>True while the zone check needs the installer: the cable seems to be elsewhere, or the module is out of view.</summary>
+        bool ZoneOpen()
+        {
+            if (zone == null || !zone.NeedsAttention) return false;
+            return !(zoneDismissed && zone.Status == ZoneStatus.Elsewhere);
+        }
+
+        /// <summary>The zone check speaks before the pins. 'afterCheck': at the second end (check again), else the first (read again).</summary>
+        void ZoneSheet(bool afterCheck)
+        {
+            Sheet(zone.Headline, zone.Text);
+            string again = afterCheck ? "recheck" : "rescan";
+            if (zone.Status == ZoneStatus.Elsewhere)
+            {
+                Btn(sheetButtons, "Not this cable", ButtonKind.Secondary, () => clicked = "zone_ignore");
+                Btn(sheetButtons, afterCheck ? "Moved · check again" : "Moved · read again", ButtonKind.Primary, () => clicked = again);
+                Instruction(zone.ColoursMatch ? "Move the cable to " + zone.Expected.Name
+                          : zone.Found != null ? "Cable on " + zone.Found.Name + "?" : zone.Expected.Name + " is empty", Warn);
+            }
+            else
+            {
+                Btn(sheetButtons, afterCheck ? "Check again" : "Read again", ButtonKind.Primary, () => clicked = again);
+                Instruction("Point at " + zone.Expected.Name, Accent);
+            }
+        }
+
+        /// <summary>
+        /// Anchors the zone hints on the modules themselves: "Reader 2 · 4 wires" where the cable seems to be,
+        /// "Reader 1 · move here" where its label says it goes.
+        /// </summary>
+        void ShowZone(ControllerReading rd, CameraFrame frame)
+        {
+            zoneShown = false;
+            if (zone == null || zone.Status != ZoneStatus.Elsewhere || zoneFrom == null) return;
+            if (zone.Found != null)
+                foreach (var m in zone.Candidates)
+                    if (m.Module == zone.Found && m.Centre.Valid) view.Anchor(CameraKeys.Module(m.Module.Id), m.Centre, frame);
+            var here = ModuleReading.Mean(rd.Positions);
+            if (here.Valid) view.Anchor(CameraKeys.Module(zone.Expected.Id), here, frame);
+            zoneFrom.GetComponentInChildren<TextMeshProUGUI>().text = zone.Found != null
+                ? zone.Found.Name + " · " + (zone.WiresFound == 1 ? "1 wire" : zone.WiresFound + " wires") : "";
+            zoneTo.GetComponentInChildren<TextMeshProUGUI>().text = zone.Expected.Name + " · move here";
+            zoneShown = true;
+        }
+
+        RectTransform ZonePill(string name, Color bg, Color fg)
+        {
+            var p = Pill(markersRT, name, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(0.5f, 0.5f), bg);
+            Txt(p, "", Small, fg, Face.Semi);
+            p.gameObject.SetActive(false);
+            return p;
+        }
+
+        void PlaceZonePill(RectTransform pill, string key, float inv)
+        {
+            if (pill == null) return;
+            Vector2 p = Vector2.zero;
+            bool show = zoneShown && key != null && view.TryGetPosition(key, out p);
+            if (pill.gameObject.activeSelf != show) pill.gameObject.SetActive(show);
+            if (!show) return;
+            PlaceAt(pill, p);
+            pill.localScale = Vector3.one * (style.labelTextScale * inv);
+        }
+
+        /// <summary>Modules that other cables' labels (scanned this session) plan for: the zone check never suggests them.</summary>
+        List<string> ClaimedByOthers()
+        {
+            var list = new List<string>();
+            foreach (var c in cables.Values)
+                if (c != current && c.Label != null) list.Add(c.Label.ControllerModule.Code);
+            return list;
+        }
+
+        void LogZone()
+        {
+            if (zone == null || zone.Status == ZoneStatus.NotSurveyed || zone.Status == ZoneStatus.InPlace) return;
+            log.Add("zone", "status=" + zone.Status + "; expected=" + zone.Expected.Id + "; found=" + (zone.Found != null ? zone.Found.Id : "") +
+                "; wires=" + zone.WiresFound + "; colours_match=" + zone.ColoursMatch);
+        }
+
+        // ================================================================== bundle check
+
+        /// <summary>True while a wire traced to another cable waits for the installer.</summary>
+        bool BundleOpen() { return bundle != null && bundle.NeedsAttention && !bundleDismissed; }
+
+        /// <summary>The bundle check speaks before the pins. 'afterCheck': at the second end (check again), else read again.</summary>
+        void BundleSheet(bool afterCheck)
+        {
+            Sheet(bundle.Headline, bundle.Text);
+            Btn(sheetButtons, "They are this cable's", ButtonKind.Secondary, () => clicked = "bundle_ignore");
+            Btn(sheetButtons, afterCheck ? "Taken off · check again" : "Taken off · read again", ButtonKind.Primary, () => clicked = afterCheck ? "recheck" : "rescan");
+            Instruction(bundle.Foreign.Count == 1 ? "This wire is from another cable" : "These wires are from another cable", Bad);
+        }
+
+        /// <summary>Marks the wires traced to another cable in red on the camera view: "12V  other cable".</summary>
+        void MarkForeign(int[] colours)
+        {
+            if (bundle == null || colours == null) return;
+            foreach (int i in bundle.Foreign)
+            {
+                if (i < 0 || i >= marks.Count || i >= colours.Length) continue;
+                var m = marks[i];
+                if (m.Set(Mark.Wrong, colours[i], m.Name + "  other cable")) StartCoroutine(Pop(m.Vis));
+            }
+        }
+
+        string BundleNames()
+        {
+            if (bundle == null) return "";
+            var names = new List<string>();
+            foreach (int i in bundle.Foreign) if (i >= 0 && i < marks.Count) names.Add(marks[i].Name);
+            return string.Join(" ", names.ToArray());
+        }
+
+        void LogBundle()
+        {
+            if (bundle == null || bundle.Status == BundleStatus.NotTraced) return;
+            log.Add("bundle", "status=" + bundle.Status + "; traced=" + bundle.Traced + "; foreign=" + BundleNames());
         }
 
         // ================================================================== markers
@@ -1647,6 +1880,8 @@ namespace InstallerAssistant.App
                 m.Animate(t, inv);
             }
             foreach (var a in arrows) a.Update(markersRT, -tagSide, t, inv);
+            PlaceZonePill(zoneFrom, zone != null && zone.Found != null ? CameraKeys.Module(zone.Found.Id) : null, inv);
+            PlaceZonePill(zoneTo, zone != null ? CameraKeys.Module(zone.Expected.Id) : null, inv);
 
             if (scanLine != null && scanLine.gameObject.activeSelf)
             {

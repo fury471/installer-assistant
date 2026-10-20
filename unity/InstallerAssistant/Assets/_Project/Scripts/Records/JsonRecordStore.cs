@@ -19,7 +19,7 @@ namespace InstallerAssistant.Records
         [Serializable]
         sealed class DeviceEntry
         {
-            public string label;          // payload, e.g. "IA|D1|READER|C01|DEV"
+            public string label;          // payload, e.g. "IA|C01|D1|A1610.READER1|A4020E|DEV"
             public int[] colours;
             public bool[] setByInstaller;
             public long savedAtTicks;
@@ -101,7 +101,7 @@ namespace InstallerAssistant.Records
         {
             rule = null;
             if (!CableLabel.TryParse(payload, out label)) return false;
-            rule = AxisCatalog.Lookup(label.Usage);
+            rule = AxisCatalog.Resolve(label);   // records with an old or unknown label are skipped
             return rule != null;
         }
 

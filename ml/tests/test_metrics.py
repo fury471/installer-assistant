@@ -20,3 +20,7 @@ def test_lab_of_white_is_100():
 def test_pure_red_patch_is_red():
     colour, conf, p = classify_patch(np.tile(np.array([205, 30, 35], np.uint8), (10, 10, 1)))
     assert colour == 0 and abs(p.sum() - 1) < 1e-9 and 0 < conf <= 1
+
+
+def test_holds_wires():
+    assert metrics.holds_wires([-1, -1, 3]) and not metrics.holds_wires([-1, -1])

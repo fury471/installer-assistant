@@ -3,6 +3,7 @@
 Keep both sides identical. Field names are snake_case on the wire. Positions are normalised to the image:
 x from 0 (left) to 1 (right), y from 0 (top) to 1 (bottom). Colour codes match WireColours in Unity:
 0 Red, 1 Black, 2 Green, 3 Yellow, 4 White, 5 Brown, 6 Blue, 7 Orange, -1 no wire.
+Modules are named as on the cable label: "A1610.READER1" (controller module) or "A4020E" (device).
 """
 from typing import List, Literal
 
@@ -24,11 +25,19 @@ class ImagePayload(BaseModel):
         return bool(self.data_b64)
 
 
+class ModuleRequest(BaseModel):
+    module: str                   # e.g. "A1610.READER2"
+    terminals: List[str]          # its terminal names as printed, pin 1..n
+
+
 class ReadRequest(BaseModel):
     frame_id: int = 0
     end: Literal["device", "controller"]
-    usage: str                    # label usage, e.g. "READER": selects the connector template
+    module: str                   # the module the label names, e.g. "A1610.READER1" or "A4020E": selects the template
     terminals: List[str]          # names as printed, in the order the response must use
+    other_modules: List[ModuleRequest] = Field(default_factory=list)   # controller only: survey these too (zone check)
+    label: str = ""               # the scanned cable label without its end, e.g. "IA|C01|D1|A1610.READER1|A4020E":
+                                  # each wire is traced back to it (bundle check); empty = do not trace
     image: ImagePayload
 
 
@@ -38,11 +47,19 @@ class ReadItem(BaseModel):
     x: float = 0.0
     y: float = 0.0
     found: bool = False           # False when the terminal could not be located
+    trace: Literal["this_cable", "other_cable", "unknown"] = "unknown"   # where the wire runs back to (bundle check)
+
+
+class ModuleItems(BaseModel):
+    module: str
+    located: bool = False         # False when the module was not found in the frame
+    items: List[ReadItem] = Field(default_factory=list)   # one per terminal of that module, in request order
 
 
 class ReadResponse(BaseModel):
     frame_id: int = 0
     items: List[ReadItem]
+    other_blocks: List[ModuleItems] = Field(default_factory=list)   # one per requested other module, same order
     model: str = ""
     error: str = ""
 
@@ -53,7 +70,8 @@ class PairPayload(BaseModel):
 
 
 class CompareRequest(BaseModel):
-    usage: str
+    controller_module: str        # e.g. "A1610.READER2"
+    device_module: str            # e.g. "A4020E"
     pin_count: int
     pairs: List[PairPayload]
     device_image: ImagePayload = Field(default_factory=ImagePayload)

@@ -10,7 +10,7 @@
 
 ## Get it running (30 minutes)
 
-1. `Scenes/App.unity` → `Installer Assistant` → Mode = Live, Test Label = `IA|D1|READER|C01`. Start the perception service (see `A-perception.md`, step 1). Play: `ArCameraView` uses the webcam (stage 0), so the whole live flow runs in the Editor.
+1. `Scenes/App.unity` → `Installer Assistant` → Mode = Live, Test Label = `IA|C01|D1|A1610.READER1|A4020E`. Start the perception service (see `A-perception.md`, step 1). Play: `ArCameraView` uses the webcam (stage 0), so the whole live flow runs in the Editor.
 2. Build to a phone once with Mode = Wizard of Oz, to check the Android setup. First fix the Player settings left over from the AR template: Company/Product name, **Package name** (`applicationIdentifier` is still `com.unity.template.ar_mobile`; use e.g. `se.lth.mamn60.installerassistant`), portrait only, minimum API level for ARCore.
 3. On the phone the perception service is the laptop: set `perceptionUrl` to the laptop's address (same Wi-Fi) and allow HTTP (Player → Other Settings → Allow downloads over HTTP).
 
@@ -21,7 +21,7 @@ The steps are listed at the top of `ArCameraView.cs`, with the AR Foundation 6.5
 1. **Scene:** add AR Session and XR Origin (Mobile AR) with the AR camera to `App.unity`; the camera gets `ARCameraBackground`. Enable vertical plane detection (the controller board is on a wall).
 2. **Frames:** `ARCameraManager.TryAcquireLatestCpuImage` → RGBA32 with `MirrorY` → `CameraFrame` (with intrinsics and pose).
 3. **See-through:** return `SeeThrough = true`; the app then keeps the check screen transparent over the camera feed.
-4. **Anchors:** image point → screen (display matrix) → raycast → world point; project it every frame in `TryGetPosition`.
+4. **Anchors:** image point → screen (display matrix) → raycast → world point; project it every frame in `TryGetPosition`. Keys include `module:<id>` (e.g. `module:A1610.READER2`) for the zone check's hints, which sit on a whole module rather than one pin.
 5. **Snapshots:** copy the converted CPU image into a `Texture2D`.
 6. Keep the webcam path for the Editor (or use XR Simulation).
 

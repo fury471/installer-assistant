@@ -70,7 +70,7 @@ Everyone needs a GitHub account. Students can get the free GitHub Student Develo
    python -m pip install -r ml/requirements.txt
    python -m pytest ml/tests
    ```
-5. **Live mode (optional, needs a webcam).** Start the service with `python -m uvicorn ml.perception_service.app:app --host 0.0.0.0 --port 8000`. In `App.unity`, select `Installer Assistant`, set Mode = Live and Test Label = `IA|D1|READER|C01`, and press Play. Don't save the scene afterwards unless it is yours (B owns `App.unity`).
+5. **Live mode (optional, needs a webcam).** Start the service with `python -m uvicorn ml.perception_service.app:app --host 0.0.0.0 --port 8000`. In `App.unity`, select `Installer Assistant`, set Mode = Live and Test Label = `IA|C01|D1|A1610.READER1|A4020E`, and press Play. Don't save the scene afterwards unless it is yours (B owns `App.unity`).
 
 Then read your package page in `docs/packages/`.
 

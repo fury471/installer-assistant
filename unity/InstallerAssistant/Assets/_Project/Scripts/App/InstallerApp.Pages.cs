@@ -141,7 +141,7 @@ namespace InstallerAssistant.App
             return dock;
         }
 
-        static string EndName(Cable c, CableEnd e) { return e == CableEnd.Controller ? "controller" : c.Label.Usage.ToLowerInvariant(); }
+        static string EndName(Cable c, CableEnd e) { return e == CableEnd.Controller ? "controller" : (c.Rule != null ? c.Rule.Usage : "device").ToLowerInvariant(); }
 
         void MiniStep(RectTransform parent, string n, string text, bool now, bool done)
         {
@@ -266,7 +266,7 @@ namespace InstallerAssistant.App
                     OverlineText(c, "Evidence", Ink3);
                     var thumbs = HRow(c, 330, 20);
                     thumbs.GetComponent<HorizontalLayoutGroup>().childForceExpandHeight = true;
-                    if (hasD) Thumb(thumbs, ds.Image, CropRect(ds.Points, ds.Image), EndTitleOf(r.Cable.Label, CableEnd.Device));
+                    if (hasD) Thumb(thumbs, ds.Image, CropRect(ds.Points, ds.Image), EndTitleOf(r.Cable.Rule, CableEnd.Device));
                     if (hasC) Thumb(thumbs, cs.Image, CropRect(UsedPins(cs.Points, r.Record != null ? r.Record.Rule : rule), cs.Image), "Controller end");
                 }
 
@@ -283,7 +283,7 @@ namespace InstallerAssistant.App
                         int col = r.Record.ColourOn(p.DeviceTerminal);
                         Swatch(row, col, 34);
                         Flex(Txt(row, WireColours.Name(col), Body, Ink), 170);
-                        Flex(Txt(row, EndTitleOf(r.Cable.Label, CableEnd.Device).Replace(" end", "") + " " + ru.Terminal(p.DeviceTerminal).Print +
+                        Flex(Txt(row, EndTitleOf(r.Cable.Rule, CableEnd.Device).Replace(" end", "") + " " + ru.Terminal(p.DeviceTerminal).Print +
                             "  →  pin " + p.ControllerPin + " (" + ru.Connector.Pin(p.ControllerPin).Print + ")", Small, Ink2));
                         Badge(row, Ok, Icon.Check, 40);
                     }

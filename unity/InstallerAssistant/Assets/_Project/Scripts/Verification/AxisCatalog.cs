@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using InstallerAssistant.Labels;
 
 namespace InstallerAssistant.Verification
 {
@@ -23,20 +25,29 @@ namespace InstallerAssistant.Verification
         public string Label { get { return Print + " (pin " + Number + ")"; } }
     }
 
-    /// <summary>A terminal block on the controller, e.g. the blue 8-pin Reader 1 block.</summary>
+    /// <summary>
+    /// A module (terminal block) on the controller, e.g. the blue 8-pin Reader 1 block. Labels name it as
+    /// "A1610.READER1" (Id); Kind says which wiring rules can use it (both reader ports share one kind).
+    /// </summary>
     public sealed class ConnectorSpec
     {
+        /// <summary>As written on labels: device code, dot, module code ("A1610.READER1").</summary>
         public readonly string Id;
         public readonly string Name;
         public readonly string Housing;
+        /// <summary>What the module is for, e.g. "reader-port"; wiring templates match on it.</summary>
+        public readonly string Kind;
         public readonly PinSpec[] Pins;
 
-        public ConnectorSpec(string id, string name, string housing, PinSpec[] pins)
+        public ConnectorSpec(string id, string name, string housing, string kind, PinSpec[] pins)
         {
-            Id = id; Name = name; Housing = housing; Pins = pins;
+            Id = id; Name = name; Housing = housing; Kind = kind; Pins = pins;
         }
 
         public int Count { get { return Pins.Length; } }
+
+        /// <summary>The module code alone ("READER1").</summary>
+        public string Code { get { int i = Id.IndexOf('.'); return i < 0 ? Id : Id.Substring(i + 1); } }
 
         public PinSpec Pin(int number)
         {
@@ -65,19 +76,97 @@ namespace InstallerAssistant.Verification
     }
 
     /// <summary>
-    /// Everything the app needs to know to judge one kind of cable ("usage"): which device,
-    /// which controller block, which terminal goes to which pin, and the documented symptoms.
-    /// The QR label names the usage; the rule is looked up here, never guessed.
+    /// A device model the app knows. A controller has several modules (its terminal blocks); a field device here has
+    /// one set of terminals, so labels name it without a module ("A4020E").
+    /// </summary>
+    public sealed class DeviceSpec
+    {
+        /// <summary>As written on labels, e.g. "A1610".</summary>
+        public readonly string Code;
+        public readonly string Model;
+        public readonly bool IsController;
+        /// <summary>Controller: its modules. Empty for a field device.</summary>
+        public readonly ConnectorSpec[] Modules;
+        /// <summary>Field device: its terminals, in the order used everywhere in the app. Empty for a controller.</summary>
+        public readonly TerminalSpec[] Terminals;
+
+        public DeviceSpec(string code, string model, bool isController, ConnectorSpec[] modules, TerminalSpec[] terminals)
+        {
+            Code = code; Model = model; IsController = isController;
+            Modules = modules ?? new ConnectorSpec[0]; Terminals = terminals ?? new TerminalSpec[0];
+        }
+
+        /// <summary>The module with this code ("READER2"), or null.</summary>
+        public ConnectorSpec Module(string code)
+        {
+            foreach (var m in Modules) if (string.Equals(m.Code, code, StringComparison.OrdinalIgnoreCase)) return m;
+            return null;
+        }
+
+        public string ModuleCodes
+        {
+            get
+            {
+                var codes = new string[Modules.Length];
+                for (int i = 0; i < codes.Length; i++) codes[i] = Modules[i].Code;
+                return string.Join(", ", codes);
+            }
+        }
+    }
+
+    /// <summary>
+    /// What the manuals say about one kind of cable, independent of which module it lands on: an OSDP reader on any
+    /// reader port of the A1610 is wired the same way, on Reader 1 or Reader 2. The label names the modules, and
+    /// AxisCatalog.Resolve binds a template to them, giving the UsageRule for that cable.
+    /// Each template is extracted from the documentation of exactly one use case and names it in Source; a new use
+    /// case (a lock on a Relay connector, a door monitor on a Door connector) gets its own template from its own section.
+    /// </summary>
+    public sealed class WiringTemplate
+    {
+        /// <summary>Kind of cable, e.g. "READER"; also the word the app uses for the device end.</summary>
+        public readonly string Usage;
+        public readonly string Title;
+        /// <summary>Controller module kind this template fits, e.g. "reader-port".</summary>
+        public readonly string ControllerKind;
+        /// <summary>Field device this template fits, e.g. "A4020E".</summary>
+        public readonly string DeviceCode;
+        public readonly string Protocol;
+        public readonly Pairing[] Pairs;
+        public readonly int[] PowerPins;
+        public readonly int[] DataPins;
+        public readonly string DataPinsNote;
+        public readonly string PolarityNote;
+        public readonly string DataSymptom;
+        public readonly string PowerSymptom;
+        public readonly string Source;
+
+        public WiringTemplate(string usage, string title, string controllerKind, string deviceCode, string protocol, Pairing[] pairs,
+            int[] powerPins, int[] dataPins, string dataPinsNote, string polarityNote, string dataSymptom, string powerSymptom, string source)
+        {
+            Usage = usage; Title = title; ControllerKind = controllerKind; DeviceCode = deviceCode; Protocol = protocol; Pairs = pairs;
+            PowerPins = powerPins; DataPins = dataPins; DataPinsNote = dataPinsNote; PolarityNote = polarityNote;
+            DataSymptom = dataSymptom; PowerSymptom = powerSymptom; Source = source;
+        }
+    }
+
+    /// <summary>
+    /// Everything the app needs to judge one cable: the wiring template bound to the modules its label names
+    /// (which device, which controller module, which terminal goes to which pin, and the documented symptoms).
+    /// Made by AxisCatalog.Resolve from the label, never guessed.
     /// </summary>
     public sealed class UsageRule
     {
+        public readonly WiringTemplate Template;
         public readonly string Usage;
         public readonly string Title;
         public readonly string DeviceModel;
         public readonly string ControllerModel;
         public readonly string Protocol;
         public readonly TerminalSpec[] DeviceTerminals;
+        /// <summary>The controller module the label names (e.g. Reader 2).</summary>
         public readonly ConnectorSpec Connector;
+        public readonly ModuleRef ControllerModule;
+        public readonly ModuleRef DeviceModule;
         public readonly Pairing[] Pairs;
         /// <summary>Pins that carry power; moving wires on them needs power off first.</summary>
         public readonly int[] PowerPins;
@@ -94,13 +183,16 @@ namespace InstallerAssistant.Verification
         /// <summary>Where the rule comes from.</summary>
         public readonly string Source;
 
-        public UsageRule(string usage, string title, string deviceModel, string controllerModel, string protocol,
-            TerminalSpec[] deviceTerminals, ConnectorSpec connector, Pairing[] pairs, int[] powerPins, int[] dataPins,
-            string dataPinsNote, string polarityNote, string dataSymptom, string powerSymptom, string source)
+        public UsageRule(WiringTemplate template, DeviceSpec controller, ConnectorSpec module, DeviceSpec device)
         {
-            Usage = usage; Title = title; DeviceModel = deviceModel; ControllerModel = controllerModel; Protocol = protocol;
-            DeviceTerminals = deviceTerminals; Connector = connector; Pairs = pairs; PowerPins = powerPins; DataPins = dataPins;
-            DataPinsNote = dataPinsNote; PolarityNote = polarityNote; DataSymptom = dataSymptom; PowerSymptom = powerSymptom; Source = source;
+            Template = template;
+            Usage = template.Usage; Title = template.Title + " on " + module.Name;
+            DeviceModel = device.Model; ControllerModel = controller.Model; Protocol = template.Protocol;
+            DeviceTerminals = device.Terminals; Connector = module;
+            ControllerModule = new ModuleRef(controller.Code, module.Code); DeviceModule = new ModuleRef(device.Code);
+            Pairs = template.Pairs; PowerPins = template.PowerPins; DataPins = template.DataPins;
+            DataPinsNote = template.DataPinsNote; PolarityNote = template.PolarityNote;
+            DataSymptom = template.DataSymptom; PowerSymptom = template.PowerSymptom; Source = template.Source;
         }
 
         public int TerminalIndex(string terminal)
@@ -135,19 +227,29 @@ namespace InstallerAssistant.Verification
 
     /// <summary>
     /// Device facts taken from the Axis documentation and checked against the team's photos of the lent kit.
-    ///   AXIS A1610 Network Door Controller user manual, "Reader connector": two 8-pin blocks; pin 1 DC ground,
-    ///   pin 2 +12 V DC out, pins 3-4 RX/TX (half duplex) or D0/D1 (Wiegand), pins 5-6 TX (full duplex only) or
-    ///   open-drain outputs (Wiegand), pins 7-8 configurable I/O. Board print on Reader 1: "- 12V A B O1 O2 IO7 IO8",
-    ///   silkscreen "A / D0", "B / D1", "A / O1", "B / O2".
+    ///   AXIS A1610 Network Door Controller user manual, "Connectors": two 8-pin reader connectors, two 4-pin door
+    ///   connectors, two relay connectors, an auxiliary, an external, a power and a backup power connector.
+    ///   "Reader connector": pin 1 DC ground, pin 2 +12 V DC out, pins 3-4 RX/TX (half duplex) or D0/D1 (Wiegand),
+    ///   pins 5-6 TX (full duplex only) or open-drain outputs (Wiegand), pins 7-8 configurable I/O. Board print on
+    ///   Reader 1: "- 12V A B O1 O2 IO7 IO8", silkscreen "A / D0", "B / D1", "A / O1", "B / O2".
+    ///   "Door connector": pins 1 and 3 DC ground, pins 2 and 4 inputs (digital or supervised).
     ///   AXIS A4020-E Reader user manual, wiring table: reader + to 12 V, - to -, A to A, B to B for Axis door
     ///   controllers other than the A1001 (which crosses A and B). LED stripe flashing red = "Waiting for controller connection".
+    /// The catalogue lists the A1610 modules whose pins and print the team has checked (Reader 1, Reader 2, Door 1).
+    /// Add Door 2, the relays and the auxiliary connector the same way once photographed.
     /// </summary>
     public static class AxisCatalog
     {
-        public static readonly ConnectorSpec A1610Reader1 = ReaderBlock("A1610/READER1", "Reader 1", "blue 8-pin block", "O1", "O2", "IO7", "IO8");
-        public static readonly ConnectorSpec A1610Reader2 = ReaderBlock("A1610/READER2", "Reader 2", "green 8-pin block", "O3", "O4", "IO9", "IO10");
+        // resolved rules, so one plan always gives the same rule object (declared first: field initialisers below use it)
+        static readonly Dictionary<string, UsageRule> resolved = new Dictionary<string, UsageRule>();
 
-        public static readonly ConnectorSpec A1610Door1 = new ConnectorSpec("A1610/DOOR1", "Door 1", "blue 4-pin block", new[]
+        public const string ReaderPort = "reader-port";
+        public const string DoorPort = "door";
+
+        public static readonly ConnectorSpec A1610Reader1 = ReaderBlock("A1610.READER1", "Reader 1", "blue 8-pin block", "O1", "O2", "IO7", "IO8");
+        public static readonly ConnectorSpec A1610Reader2 = ReaderBlock("A1610.READER2", "Reader 2", "green 8-pin block", "O3", "O4", "IO9", "IO10");
+
+        public static readonly ConnectorSpec A1610Door1 = new ConnectorSpec("A1610.DOOR1", "Door 1", "blue 4-pin block", DoorPort, new[]
         {
             new PinSpec(1, "\u2212", "\u2212", "Ground"),
             new PinSpec(2, "IO5", "IO5", "Door monitor input (digital or supervised)"),
@@ -157,7 +259,7 @@ namespace InstallerAssistant.Verification
 
         static ConnectorSpec ReaderBlock(string id, string name, string housing, string o1, string o2, string io1, string io2)
         {
-            return new ConnectorSpec(id, name, housing, new[]
+            return new ConnectorSpec(id, name, housing, ReaderPort, new[]
             {
                 new PinSpec(1, "\u2212", "\u2212", "DC ground (0 V) for the reader"),
                 new PinSpec(2, "12V", "+12V", "+12 V DC output that powers the reader"),
@@ -179,15 +281,18 @@ namespace InstallerAssistant.Verification
             new TerminalSpec("B", "B", "RS485 B"),
         };
 
-        /// <summary>MVP usage: an OSDP reader (AXIS A4020-E) on the A1610's Reader 1 block, powered by the controller.</summary>
-        public static readonly UsageRule OsdpReaderOnReader1 = new UsageRule(
+        public static readonly DeviceSpec A1610 = new DeviceSpec("A1610", "AXIS A1610 Network Door Controller", true,
+            new[] { A1610Reader1, A1610Reader2, A1610Door1 }, null);
+        public static readonly DeviceSpec A4020E = new DeviceSpec("A4020E", "AXIS A4020-E Reader", false, null, A4020Terminals);
+        public static readonly DeviceSpec[] Devices = { A1610, A4020E };
+
+        /// <summary>An OSDP reader (AXIS A4020-E) on a reader port of the A1610, powered by the controller.</summary>
+        public static readonly WiringTemplate OsdpReader = new WiringTemplate(
             usage: "READER",
-            title: "OSDP reader on Reader 1",
-            deviceModel: "AXIS A4020-E Reader",
-            controllerModel: "AXIS A1610 Network Door Controller",
+            title: "OSDP reader",
+            controllerKind: ReaderPort,
+            deviceCode: "A4020E",
             protocol: "OSDP over RS485, half duplex",
-            deviceTerminals: A4020Terminals,
-            connector: A1610Reader1,
             pairs: new[] { new Pairing("+", 2), new Pairing("-", 1), new Pairing("A", 3), new Pairing("B", 4) },
             powerPins: new[] { 1, 2 },
             dataPins: new[] { 3, 4 },
@@ -197,13 +302,94 @@ namespace InstallerAssistant.Verification
             powerSymptom: "The reader will not power up correctly. Fix this before powering the controller.",
             source: "AXIS A1610 user manual (Reader connector) · AXIS A4020-E user manual (wiring table, LED)");
 
-        public static readonly UsageRule[] Rules = { OsdpReaderOnReader1 };
+        public static readonly WiringTemplate[] Templates = { OsdpReader };
 
-        /// <summary>The rule for a label's usage, or null if the app does not know it.</summary>
-        public static UsageRule Lookup(string usage)
+        /// <summary>The MVP cable: an A4020-E on Reader 1.</summary>
+        public static readonly UsageRule OsdpReaderOnReader1 = Bind(OsdpReader, A1610, A1610Reader1, A4020E);
+        /// <summary>The same cable on Reader 2.</summary>
+        public static readonly UsageRule OsdpReaderOnReader2 = Bind(OsdpReader, A1610, A1610Reader2, A4020E);
+
+        static UsageRule Bind(WiringTemplate t, DeviceSpec controller, ConnectorSpec module, DeviceSpec device)
         {
-            foreach (var r in Rules) if (string.Equals(r.Usage, usage, StringComparison.OrdinalIgnoreCase)) return r;
+            string key = controller.Code + "." + module.Code + "|" + device.Code;
+            UsageRule r;
+            if (!resolved.TryGetValue(key, out r)) { r = new UsageRule(t, controller, module, device); resolved[key] = r; }
+            return r;
+        }
+
+        /// <summary>The device with this label code ("A1610"), or null.</summary>
+        public static DeviceSpec Device(string code)
+        {
+            foreach (var d in Devices) if (string.Equals(d.Code, code, StringComparison.OrdinalIgnoreCase)) return d;
             return null;
+        }
+
+        /// <summary>The rule for the cable this label describes, or null if the app cannot check it.</summary>
+        public static UsageRule Resolve(CableLabel label)
+        {
+            string problem;
+            return Resolve(label, out problem);
+        }
+
+        /// <summary>The rule for the cable this label describes; null with a sentence for the installer if the app cannot check it.</summary>
+        public static UsageRule Resolve(CableLabel label, out string problem)
+        {
+            problem = null;
+            if (label == null) { problem = "No label."; return null; }
+            return Resolve(label.ControllerModule, label.DeviceModule, out problem);
+        }
+
+        /// <summary>Binds the template that connects these two modules, e.g. A1610.READER2 and A4020E.</summary>
+        public static UsageRule Resolve(ModuleRef controllerModule, ModuleRef deviceModule, out string problem)
+        {
+            problem = null;
+            var controller = Device(controllerModule.Device);
+            if (controller == null) { problem = "The app does not know the device \"" + controllerModule.Device + "\"."; return null; }
+            if (!controller.IsController)
+            {
+                problem = controllerModule.Device + " is not a door controller. The label names the controller module first, then the device.";
+                return null;
+            }
+            var module = controller.Module(controllerModule.Module);
+            if (module == null)
+            {
+                problem = "The " + controller.Code + " has no module \"" + controllerModule.Module + "\". It has " + controller.ModuleCodes + ".";
+                return null;
+            }
+            var device = Device(deviceModule.Device);
+            if (device == null) { problem = "The app does not know the device \"" + deviceModule.Device + "\"."; return null; }
+            if (device.IsController) { problem = deviceModule.Device + " is a controller. The label names the field device second."; return null; }
+            if (!string.IsNullOrEmpty(deviceModule.Module))
+            {
+                problem = "The " + device.Code + " has one set of terminals: write it as \"" + device.Code + "\" on the label.";
+                return null;
+            }
+            foreach (var t in Templates)
+                if (t.ControllerKind == module.Kind && string.Equals(t.DeviceCode, device.Code, StringComparison.OrdinalIgnoreCase))
+                    return Bind(t, controller, module, device);
+            problem = "The app has no wiring rule for an " + device.Model + " on " + module.Name + " of the " + controller.Code + ".";
+            return null;
+        }
+
+        /// <summary>
+        /// Every other module of the rule's controller: the places the wire reader also looks, so the zone check can
+        /// tell when the cable sits in another module than its label names.
+        /// </summary>
+        public static ConnectorSpec[] OtherModules(UsageRule rule)
+        {
+            var controller = Device(rule.ControllerModule.Device);
+            var list = new List<ConnectorSpec>();
+            if (controller != null) foreach (var m in controller.Modules) if (m != rule.Connector) list.Add(m);
+            return list.ToArray();
+        }
+
+        /// <summary>The controller module with this label code ("A1610.READER2"), or null.</summary>
+        public static ConnectorSpec Module(string code)
+        {
+            ModuleRef m;
+            if (!ModuleRef.TryParse(code, out m)) return null;
+            var d = Device(m.Device);
+            return d != null ? d.Module(m.Module) : null;
         }
     }
 }
