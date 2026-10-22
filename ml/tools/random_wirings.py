@@ -13,12 +13,12 @@ SESSION = 1                      # change to 2 for the second session: gives a d
 N_CTRL = 12                      # controller wirings per session
 N_RDR = 6                        # reader wirings per session
 
-WIRES = ["orange", "black", "green", "yellow"]           # the four wires on the bench cable
+WIRES = ["red", "black", "green", "yellow"]           # the four wires on the bench cable
 CTRL_PINS = ["1 -", "2 12V", "3 A", "4 B", "5 O1", "6 O2", "7 IO7", "8 IO8"]
 RDR_TERMINALS = ["+", "-", "A", "B"]
 
 # the wiring the rule expects at the controller, for this cable
-CORRECT = {"orange": "2 12V", "black": "1 -", "green": "3 A", "yellow": "4 B"}
+CORRECT = {"red": "2 12V", "black": "1 -", "green": "3 A", "yellow": "4 B"}
 
 # the cable's label says READER1; a wrong-module shot puts the whole cable on READER2 (same pin numbers there)
 LABEL_MODULE = "READER1"
@@ -80,6 +80,15 @@ def tangle_for_shot(i, wiring):
     return tangle_random.choice(WIRES), tangle_random.choice(free_pins)
 
 
+# Pins 5-8 are printed differently on Reader 2 (O3 O4 IO9 IO10); pins 1-4 are the same on both reader blocks.
+READER2_NAMES = {"5 O1": "5 O3", "6 O2": "6 O4", "7 IO7": "7 IO9", "8 IO8": "8 IO10"}
+
+
+def pin_name(pin, module):
+    """The pin as printed on the module the wire sits on."""
+    return READER2_NAMES.get(pin, pin) if module == OTHER_MODULE else pin
+
+
 random.seed(SESSION)                                              # same list every time for this session
 print(f"SESSION {SESSION}")
 print()
@@ -88,9 +97,9 @@ for i in range(1, N_CTRL + 1):
     w = realistic_wiring()
     module = module_for_shot(i)
     other = tangle_for_shot(i, w)
-    line = f"ctrl wiring {i:02d} on {module}: " + ", ".join(f"{c} → {w[c]}" for c in WIRES)
+    line = f"ctrl wiring {i:02d} on {module}: " + ", ".join(f"{c} → {pin_name(w[c], module)}" for c in WIRES)
     if other:
-        line += f"   + other cable's {other[0]} → {other[1]}"
+        line += f"   + other cable's {other[0]} → {pin_name(other[1], module)}"
     print(line)
 print()
 print("READER")

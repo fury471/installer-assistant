@@ -1,0 +1,97 @@
+# References and what we use them for
+
+Every reference cited in `docs/design-rationale.md`, `docs/work-split-plan.md`, `docs/packages/A-perception.md` and the code, with the claim we make with it and how it was checked.
+
+**Check column:**
+- **online** means the citation details and the claim were checked against the source or a publisher/library page on 20 Oct 2026.
+- **standard** means a classic whose citation details match the standard published record; the claim is the paper's well-known central finding. It was not re-opened online on 20 Oct.
+- **⚠** means something needs fixing; the note says what.
+
+## Issues to fix in the docs
+
+1. **Henderson & Feiner (2011) is cited for something the study did not find.** The design rationale says AR "reduces errors in assembly and maintenance" and "reduced errors versus paper" citing Tang et al. (2003) and Henderson & Feiner (2011). Henderson & Feiner compared AR with a head-worn display without tracking and with an LCD (an improved version of laptop documentation), not paper. AR let mechanics **locate tasks faster** (about half the LCD time) and with **less head and neck movement**; errors were very few in every condition and no effect of display condition was found (Henderson's 2011 dissertation, §1.2.1). Only Tang et al. (2003) supports "fewer errors", in a comparison that included a printed manual. Suggested wording: *"Overlaying instructions on the work pieces reduced the assembly error rate by 82 % and lowered mental effort, in a comparison with a printed manual and with instructions on a monitor and on a head-mounted display (Tang et al., 2003); in vehicle maintenance, AR let mechanics locate tasks faster and with less head movement than an LCD manual (Henderson & Feiner, 2011)."*
+2. **Tong et al. (2024) is stretched.** The plan says vision-language models "miss fine visual detail in full scenes". The paper shows *systematic visual shortcomings* of multimodal LLMs on nine basic visual patterns, one of which is *colour and appearance*. It does not test cropping or small regions. Suggested wording: *"multimodal LLMs show systematic visual shortcomings, including on colour and appearance (Tong et al., 2024); we send crops so that the model looks only at the wires, and we measure whether this helps."*
+3. **ISO/IEC 18004:2015 has been replaced** by ISO/IEC 18004:2024 (in force since 15 Aug 2024). Cite the 2024 edition.
+4. **Allegion does not state "black".** The design rationale calls the Wiegand pigtail scheme "red/black/green/white (Allegion knowledge base)". The Allegion page's text gives red = power, green = D0, white = D1 and pink/tan = RS-485 (OSDP); it says only that ground and shield go to ground, without a colour in the text. Write "red, green and white" or find a source for black.
+5. **SUS has no reference in the design rationale.** The rationale measures SUS but only the work-split plan lists Brooke (1996). Add it.
+6. **"Spatial contiguity" is not Chandler & Sweller's term** (it comes from Mayer's multimedia principles). Chandler & Sweller (1991) support *split attention*; keep that word.
+7. **Hoober (2013):** the author later said his thumb-reach diagrams in this article were inaccurate. Use the article only for how people hold phones (49 % one-handed, 36 % cradled, 15 % two-handed).
+8. **Missing details:** add pages and DOI to Tang et al. (2003) and Henderson & Feiner (2011) (below). mBEST's volume and pages could not be confirmed online; keep the DOI only.
+
+## Axis documents, standards and industry sources
+
+| Reference | What we use it for | Check |
+| --- | --- | --- |
+| Axis Communications. AXIS A1610 Network Door Controller user manual. [help.axis.com](https://help.axis.com/en-us/axis-a1610) | Reader connector pins: 1 DC ground, 2 +12 V (max 500 mA combined for all readers), 3–4 RS-485 RX/TX (half duplex), 5–6 TX full duplex only (Wiegand: open-drain outputs), 7–8 configurable I/O. No wire colours anywhere. | online |
+| Axis Communications. AXIS A1610 Network Door Controller datasheet. [axis.com](https://www.axis.com/dam/public/81/33/47/datasheet-axis-a1610-network-door-controller-en-US-386201.pdf) | Up to 4 OSDP or 2 Wiegand readers; reader data "OSDP/RS485 half duplex, Wiegand"; reader power 12 V DC, max 6 W. | online |
+| Axis Communications. AXIS A4020-E Reader user manual. [help.axis.com](https://help.axis.com/en-us/axis-a4020-e) | Wiring table: reader + → 12 V, − → −, A → A, B → B for Axis controllers other than the A1001 (A and B cross there); LED "flashing red = waiting for controller connection"; DIP 1–2 = OSDP address, DIP 3 = RS-485 termination. No wire colours. | online |
+| ANSI/TIA-606-C (2017). *Administration Standard for Telecommunications Infrastructure*. TIA. Summary: McLaughlin, P. (2019, June 1). TIA-606-C standard requirements for cable-plant administration. *Cabling Installation & Maintenance*. [cablinginstall.com](https://www.cablinginstall.com/cable/article/14035166/tia606c-standard-requirements-for-cableplant-administration) | Label every cable at both ends with one identifier. (The standard itself is paid; the claim rests on the trade-press summary.) | online (summary) |
+| ISO/IEC 18004:2024. *Information technology – Automatic identification and data capture techniques – QR code bar code symbology specification*. | The QR code format of our labels (quiet zone, error-correction levels). ⚠ replaces the 2015 edition we cite. | online |
+| Security Industry Association. SIA AC-01-1996.10, *Access Control Standard Protocol for the 26-Bit Wiegand™ Reader Interface*. [securityindustry.org](https://www.securityindustry.org/industry-standards/sia-ac-01-1996-10) | Its public description covers data transfer, power and reader-mounted devices and does not mention wire colours (assumption 7). | online |
+| Allegion. Is there a listing showing the functions of the wires to the wall mounted readers? (knowledge base). [kc.allegion.com](https://kc.allegion.com/kb/article/is-there-a-listing-showing-the-functions-of-the-wires-to-the-wall-mounted-readers) | One manufacturer's pigtail colours: red power, green D0, white D1, pink/tan RS-485. Shows colours are vendor conventions, not a standard (assumption 7). ⚠ see issue 4. | online |
+
+## AR, interaction and cognition
+
+| Reference | What we use it for | Check |
+| --- | --- | --- |
+| Tang, A., Owen, C., Biocca, F., & Mou, W. (2003). Comparative effectiveness of augmented reality in object assembly. *Proc. CHI 2003*, 73–80. [doi:10.1145/642611.642626](https://doi.org/10.1145/642611.642626) | "Overlaying 3D instructions on the actual work pieces reduced the error rate for an assembly task by 82 %" (abstract), and measured mental effort was lower; the other conditions were a printed manual and instructions on a monitor and on a head-mounted display. | online |
+| Henderson, S., & Feiner, S. (2011). Exploring the benefits of augmented reality documentation for maintenance and repair. *IEEE Transactions on Visualization and Computer Graphics*, 17(10), 1355–1368. | AR let mechanics locate tasks faster and with less head movement than an LCD manual. ⚠ not fewer errors, not versus paper (issue 1). | online |
+| Bell, B., Feiner, S., & Höllerer, T. (2001). View management for virtual and augmented reality. *Proc. UIST 2001*. [doi:10.1145/502348.502363](https://doi.org/10.1145/502348.502363) | Tags laid out so they never overlap or cover what they label (`TagLayout`). | standard |
+| Gabbard, J. L., Swan, J. E., II, & Hix, D. (2006). The effects of text drawing styles, background textures, and natural lighting on text legibility in outdoor augmented reality. *Presence*, 15(1), 16–32. | Text over the camera image sits on opaque panels, because drawing style and background affect AR text legibility. | online |
+| Chandler, P., & Sweller, J. (1991). Cognitive load theory and the format of instruction. *Cognition and Instruction*, 8(4), 293–332. [doi:10.1207/s1532690xci0804_2](https://doi.org/10.1207/s1532690xci0804_2) | Split attention: result drawn on the terminals in hand; the other end as a linked snapshot. ⚠ issue 6. | standard |
+| Sweller, J. (1988). Cognitive load during problem solving: Effects on learning. *Cognitive Science*, 12(2), 257–285. [doi:10.1207/s15516709cog1202_4](https://doi.org/10.1207/s15516709cog1202_4) | Origin of cognitive load theory. | standard |
+| Sweller, J., van Merriënboer, J. J. G., & Paas, F. (2019). Cognitive architecture and instructional design: 20 years later. *Educational Psychology Review*, 31, 261–292. [doi:10.1007/s10648-019-09465-5](https://doi.org/10.1007/s10648-019-09465-5) | Intrinsic vs. extraneous load; the app removes extraneous load ("scan first", the label carries the knowledge). | standard |
+| Cowan, N. (2001). The magical number 4 in short-term memory. *Behavioral and Brain Sciences*, 24(1), 87–114. [doi:10.1017/S0140525X01003922](https://doi.org/10.1017/S0140525X01003922) | Working memory holds about four chunks: one question at a time; the app names the other end. | standard |
+| Hick, W. E. (1952). On the rate of gain of information. *Quarterly Journal of Experimental Psychology*, 4(1), 11–26. [doi:10.1080/17470215208416600](https://doi.org/10.1080/17470215208416600) | Fewer choices, faster decisions: Home has one action. | standard |
+| Fitts, P. M., & Seeger, C. M. (1953). S-R compatibility: Spatial characteristics of stimulus and response codes. *Journal of Experimental Psychology*, 46(3), 199–210. | Result rows follow the terminals' order on screen. | standard |
+| Altmann, E. M., & Trafton, J. G. (2002). Memory for goals: An activation-based model. *Cognitive Science*, 26(1), 39–83. [doi:10.1207/s15516709cog2601_2](https://doi.org/10.1207/s15516709cog2601_2) | Resuming a suspended goal needs a cue: "Finish later" keeps the cable on Home. | standard |
+| Norman, D. A. (1981). Categorization of action slips. *Psychological Review*, 88(1), 1–15. [doi:10.1037/0033-295X.88.1.1](https://doi.org/10.1037/0033-295X.88.1.1) | Description errors: the right action on a similar-looking object (Reader 1 vs. Reader 2), motivating the zone check. | standard |
+| Norman, D. A. (2013). *The Design of Everyday Things* (revised ed.). Basic Books. | Knowledge in the world (the label is the plan), gulf of execution, mode errors, feedforward, description-similarity slips. | standard |
+| Nielsen, J. (1994). Enhancing the explanatory power of usability heuristics. *Proc. CHI 1994*, 152–158. | Heuristics: visibility of system status, match with the real world, consistency, error prevention, recognition rather than recall, help users recognise, diagnose and recover from errors. | standard |
+| Hoober, S. (2013, February 18). How do users really hold mobile devices? *UXmatters*. [uxmatters.com](https://www.uxmatters.com/mt/archives/2013/02/how-do-users-really-hold-mobile-devices.php) | 780 observed users: 49 % one-handed, 36 % cradled, 15 % two-handed; actions in a bottom sheet. ⚠ issue 7. | online |
+| Google. Touch target size (Android Accessibility Help). [support.google.com](https://support.google.com/accessibility/android/answer/7101858) | Minimum 48 × 48 dp targets (about 9 mm), at least 8 dp apart. | online |
+| W3C (2023). WCAG 2.2, Success Criterion 1.4.1 Use of Color. [w3.org](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color) | Status never by colour alone (icon + word + colour); text contrast at AA. | standard |
+| Okabe, M., & Ito, K. (2008). Color Universal Design (CUD): How to make figures and presentations that are friendly to colorblind people. [jfly.uni-koeln.de](https://jfly.uni-koeln.de/color) (first published 2002, revised 2008) | Status colours chosen to stay distinguishable for colour-blind users. | online |
+
+## Human–automation interaction and AI
+
+| Reference | What we use it for | Check |
+| --- | --- | --- |
+| Parasuraman, R., Sheridan, T. B., & Wickens, C. D. (2000). A model for types and levels of human interaction with automation. *IEEE Transactions on Systems, Man, and Cybernetics – Part A*, 30(3), 286–297. [doi:10.1109/3468.844354](https://doi.org/10.1109/3468.844354) | Automation high for information acquisition and analysis, deliberately limited for decision selection: AI perceives, rules decide, the installer has the last word. | standard |
+| Parasuraman, R., & Riley, V. (1997). Humans and automation: Use, misuse, disuse, abuse. *Human Factors*, 39(2), 230–253. | Over- and under-reliance on automation; amber means "you decide". | standard |
+| Lee, J. D., & See, K. A. (2004). Trust in automation: Designing for appropriate reliance. *Human Factors*, 46(1), 50–80. | Appropriate reliance needs visible reliability and reasons; problems first, correct pins collapsed. | standard |
+| Shneiderman, B. (2020). Human-centered artificial intelligence: Reliable, safe & trustworthy. *International Journal of Human–Computer Interaction*, 36(6). [doi:10.1080/10447318.2020.1741118](https://doi.org/10.1080/10447318.2020.1741118) | High automation together with high human control: the installer can overrule every AI verdict. | standard |
+| Amershi, S., Weld, D., Vorvoreanu, M., Fourney, A., Nushi, B., Collisson, P., Suh, J., Iqbal, S., Bennett, P. N., Inkpen, K., Teevan, J., Kikin-Gil, R., & Horvitz, E. (2019). Guidelines for human-AI interaction. *Proc. CHI 2019*. [summary](https://www.microsoft.com/en-us/research/blog/guidelines-for-human-ai-interaction-design/) | G2 "Make clear how well the system can do what it can do", G9 "Support efficient correction", G11 "Make clear why the system did what it did". | online |
+| Tong, S., Liu, Z., Zhai, Y., Ma, Y., LeCun, Y., & Xie, S. (2024). Eyes wide shut? Exploring the visual shortcomings of multimodal LLMs. *Proc. CVPR 2024*, 9568–9578. | Multimodal LLMs have systematic visual shortcomings (nine patterns, including colour and appearance), so the VLM is a second opinion, never the judge. ⚠ issue 2. | online |
+| Dahlbäck, N., Jönsson, A., & Ahrenberg, L. (1993). Wizard of Oz studies: Why and how. *Proc. IUI 1993*. [doi:10.1145/169891.169968](https://doi.org/10.1145/169891.169968) | The Wizard-of-Oz mode: study the interaction before the perception works. | standard |
+
+## Computer vision (package A)
+
+| Reference | What we use it for | Check |
+| --- | --- | --- |
+| Rublee, E., Rabaud, V., Konolige, K., & Bradski, G. (2011). ORB: An efficient alternative to SIFT or SURF. *Proc. ICCV 2011*, 2564–2571. | Feature points matched between the template photo and the frame (`locate`). | standard |
+| Fischler, M. A., & Bolles, R. C. (1981). Random sample consensus. *Communications of the ACM*, 24(6), 381–395. [doi:10.1145/358669.358692](https://doi.org/10.1145/358669.358692) | RANSAC: the homography that most matches agree on, ignoring wrong matches. | standard |
+| Hartley, R., & Zisserman, A. (2004). *Multiple View Geometry in Computer Vision* (2nd ed.). Cambridge University Press. | Homography estimation; projecting the template's pins into the frame. | standard |
+| Buchsbaum, G. (1980). A spatial processor model for object colour perception. *Journal of the Franklin Institute*, 310(1), 1–26. | Grey-world white balance (`colour.py`). | standard |
+| Sharma, G., Wu, W., & Dalal, E. N. (2005). The CIEDE2000 color-difference formula: Implementation notes, supplementary test data, and mathematical observations. *Color Research & Application*, 30(1), 21–30. | Cited in `colour.py` as the better colour distance to try; the code uses CIE76 today. Not yet in any reference list. | standard |
+| Guo, C., Pleiss, G., Sun, Y., & Weinberger, K. Q. (2017). On calibration of modern neural networks. *Proc. ICML 2017*. | Temperature scaling, so that a confidence of 0.80 means about 80 % correct; expected calibration error (`metrics.py`). | standard |
+| Adams, R., & Bischof, L. (1994). Seeded region growing. *IEEE TPAMI*, 16(6), 641–647. [doi:10.1109/34.295913](https://doi.org/10.1109/34.295913) | Baseline tracer: grow a region from each terminal over the wire's colour (`tracing.py`). | standard |
+| Zhang, T. Y., & Suen, C. Y. (1984). A fast parallel algorithm for thinning digital patterns. *Communications of the ACM*, 27(3), 236–239. [doi:10.1145/357994.358023](https://doi.org/10.1145/357994.358023) | Next tracing step: thin the wire mask to centre lines. | standard |
+| Choi, A., Tong, D., Park, B., Terzopoulos, D., Joo, J., & Jawed, M. K. (2023). mBEST: Realtime deformable linear object detection through minimal bending energy skeleton pixel traversals. *IEEE Robotics and Automation Letters*. [doi:10.1109/LRA.2023.3290419](https://doi.org/10.1109/LRA.2023.3290419) | Following wires through crossings by least bending. (Authors and DOI checked; volume and pages not confirmed.) | online |
+| Caporali, A., Zanella, R., De Gregorio, D., & Palli, G. (2022). Ariadne+: Deep learning-based augmented framework for the instance segmentation of wires. *IEEE Transactions on Industrial Informatics*, 18(12), 8607–8617. [doi:10.1109/TII.2022.3154477](https://doi.org/10.1109/TII.2022.3154477) | Learned wire instance segmentation, if the classical tracer is not enough. | online |
+| Caporali, A., Galassi, K., Zanella, R., & Palli, G. (2022). FASTDLO: Fast deformable linear objects instance segmentation. *IEEE Robotics and Automation Letters*, 7(4), 9075–9082. [doi:10.1109/LRA.2022.3189791](https://doi.org/10.1109/LRA.2022.3189791) | Same, faster. | online |
+
+## Study instruments
+
+| Reference | What we use it for | Check |
+| --- | --- | --- |
+| Hart, S. G., & Staveland, L. E. (1988). Development of NASA-TLX (Task Load Index): Results of empirical and theoretical research. *Advances in Psychology*, 52, 139–183. [doi:10.1016/S0166-4115(08)62386-9](https://doi.org/10.1016/S0166-4115(08)62386-9) | Workload after each task. | standard |
+| Brooke, J. (1996). SUS: A "quick and dirty" usability scale. In *Usability Evaluation in Industry* (pp. 189–194). Taylor & Francis. | Usability score. ⚠ issue 5. | standard |
+
+## Software design
+
+| Reference | What we use it for | Check |
+| --- | --- | --- |
+| Martin, R. C. (2017). *Clean Architecture*. Prentice Hall. | The dependency rule: the domain knows nothing about Unity, AR or AI. | standard |
+| Gamma, E., Helm, R., Johnson, R., & Vlissides, J. (1994). *Design Patterns*. Addison-Wesley. | Strategy pattern: Wizard-of-Oz or live implementation behind each contract. | standard |
+| Ries, E. (2011). *The Lean Startup*. Crown Business. | Minimum viable product. | standard |
