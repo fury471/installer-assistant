@@ -40,7 +40,8 @@ def read(req: ReadRequest) -> ReadResponse:
         return ReadResponse(frame_id=req.frame_id, items=[ReadItem() for _ in req.terminals], model=reader.name,
                             error="reader returned %d items for %d terminals" % (len(items), len(req.terminals)))
     others = survey(req, image)
-    print("read %s %s (+%d modules surveyed): %.0f ms" % (req.end, req.module, len(others), (time.perf_counter() - t0) * 1000))
+    print("read %s %s (+%d modules surveyed): %dx%d image, %.0f ms" % (req.end, req.module, len(others),
+          image.shape[1], image.shape[0], (time.perf_counter() - t0) * 1000))   # width x height the phone sent
     return ReadResponse(frame_id=req.frame_id, items=items, other_blocks=others, model=reader.name)
 
 

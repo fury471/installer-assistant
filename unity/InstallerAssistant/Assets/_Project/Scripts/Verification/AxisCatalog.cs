@@ -235,8 +235,9 @@ namespace InstallerAssistant.Verification
     ///   "Door connector": pins 1 and 3 DC ground, pins 2 and 4 inputs (digital or supervised).
     ///   AXIS A4020-E Reader user manual, wiring table: reader + to 12 V, - to -, A to A, B to B for Axis door
     ///   controllers other than the A1001 (which crosses A and B). LED stripe flashing red = "Waiting for controller connection".
-    /// The catalogue lists the A1610 modules whose pins and print the team has checked (Reader 1, Reader 2, Door 1).
-    /// Add Door 2, the relays and the auxiliary connector the same way once photographed.
+    /// The catalogue lists the A1610 modules whose pins and print the team has checked (Reader 1, Reader 2, Door 1,
+    /// Door 2; Door 2 print, top to bottom: "REX/IO12 GND DPS/IO11 GND"). Add the relays and the auxiliary connector
+    /// the same way once photographed.
     /// </summary>
     public static class AxisCatalog
     {
@@ -255,6 +256,14 @@ namespace InstallerAssistant.Verification
             new PinSpec(2, "IO5", "IO5", "Door monitor input (digital or supervised)"),
             new PinSpec(3, "\u2212", "\u2212", "Ground"),
             new PinSpec(4, "IO6", "IO6", "Door monitor input (digital or supervised)"),
+        });
+
+        public static readonly ConnectorSpec A1610Door2 = new ConnectorSpec("A1610.DOOR2", "Door 2", "green 4-pin block", DoorPort, new[]
+        {
+            new PinSpec(1, "\u2212", "\u2212", "Ground"),
+            new PinSpec(2, "IO11", "IO11", "Door monitor input (digital or supervised)"),
+            new PinSpec(3, "\u2212", "\u2212", "Ground"),
+            new PinSpec(4, "IO12", "IO12", "Door monitor input (digital or supervised)"),
         });
 
         static ConnectorSpec ReaderBlock(string id, string name, string housing, string o1, string o2, string io1, string io2)
@@ -282,7 +291,7 @@ namespace InstallerAssistant.Verification
         };
 
         public static readonly DeviceSpec A1610 = new DeviceSpec("A1610", "AXIS A1610 Network Door Controller", true,
-            new[] { A1610Reader1, A1610Reader2, A1610Door1 }, null);
+            new[] { A1610Reader1, A1610Reader2, A1610Door1, A1610Door2 }, null);
         public static readonly DeviceSpec A4020E = new DeviceSpec("A4020E", "AXIS A4020-E Reader", false, null, A4020Terminals);
         public static readonly DeviceSpec[] Devices = { A1610, A4020E };
 

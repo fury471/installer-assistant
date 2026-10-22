@@ -9,7 +9,7 @@ Everything you build later needs real pictures of the bench:
 - The colour reader (M3) needs photos with known wire colours to learn from and to be tested on.
 - The report needs numbers measured on photos you never tuned on.
 
-**The final test is live, not photos.** On test day, users hold this phone (the Redmi K40S) and run the real-time AR app on the real bench: the camera stream runs live, markers stay on the pins while the phone moves (Xiaoxin's anchors), and each reading goes phone → your service → phone in 1–3 s. The photos in M0 are only for building (the template) and for measuring accuracy; nothing in the final app reads a stored photo. From M2 on, every milestone is also checked live in the app on this phone.
+**The final test is live, not photos.** On test day, users hold this phone (the Redmi K80S) and run the real-time AR app on the real bench: the camera stream runs live, markers stay on the pins while the phone moves (Xiaoxin's anchors), and each reading goes phone → your service → phone in 1–3 s. The photos in M0 are only for building (the template) and for measuring accuracy; nothing in the final app reads a stored photo. From M2 on, every milestone is also checked live in the app on this phone.
 
 So M0 produces two things: a **template** and **two labelled photo sets**. Session 1 is for building and tuning. Session 2 is shot the same day, after a break and with the setup changed, and stays unopened until the final week: it is the final test.
 
@@ -60,7 +60,7 @@ Then set `SESSION = 2` in the script, run it again into `shot_list_s2.txt`, and 
 
 ## Day 2 · At the bench, both sessions (Thu 22 Oct, about 6 hours with the break)
 
-Bring: the Redmi K40S (the app phone) and your iPhone, both charged, the check sheet, labels, clear tape, the spare wires, blank paper and a thick pen, a desk lamp.
+Bring: the Redmi K80S (the app phone) and your iPhone, both charged, the check sheet, labels, clear tape, the spare wires, blank paper and a thick pen, a desk lamp.
 
 **6. Set up.**
 - Fold a C01 pair onto the bench cable. READER END near the reader. CONTROLLER END where the wires **fan out** at the A1610, so the label and the terminals are in the same picture. Cover with clear tape.
