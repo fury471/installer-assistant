@@ -34,7 +34,7 @@ namespace InstallerAssistant.App
     public partial class InstallerApp
     {
         /// <summary>How long the app keeps looking for a label before it asks the installer for help.</summary>
-        const float LabelSearchSeconds = 2f;
+        const float LabelSearchSeconds = 6f;   // time to bring the phone close and let the camera focus (labels read at 20-30 cm)
 
         // ------------------------------------------------------------------ view state of the check
 
@@ -225,7 +225,7 @@ namespace InstallerAssistant.App
         {
             while (true)
             {
-                Instruction("Point the camera at the cable label", Accent);
+                Instruction("Hold the phone 20 to 30 cm from the cable label", Accent);
                 Sheet("Scan the cable label", why);
                 ProgressLine("Looking for the " + LabelWord(), true);
                 scanLine.gameObject.SetActive(true);
@@ -256,11 +256,12 @@ namespace InstallerAssistant.App
                 {
                     // without the label there is no pairing, so the app asks for it instead of guessing
                     log.Add("label_missing");
-                    Instruction("No label on this cable", Warn);
+                    Instruction("Move closer to the label", Warn);
                     ShowMissingGuide(true);
-                    Sheet("Label missing", "The app can't tell which cable this is. Attach " +
-                        (pairWith != null ? "the label " + pairWith.Display : "the cable's label") + " to this end, then scan again.");
-                    Btn(sheetButtons, "Label attached · scan again", ButtonKind.Primary, () => clicked = "labelled");
+                    Sheet("Can't find the label", "Hold the phone 20 to 30 cm from the label and keep it still for a moment. " +
+                        "If this end has no label yet, attach " +
+                        (pairWith != null ? "the label " + pairWith.Display : "the cable's label") + ", then scan again.");
+                    Btn(sheetButtons, "Scan again", ButtonKind.Primary, () => clicked = "labelled");
                     yield return WaitClick();
                     ShowMissingGuide(false);
                     if (op != null) op.LabelAttached();

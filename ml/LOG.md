@@ -36,4 +36,17 @@
 - QR reading distance with the phone camera (K80S via iVCam over USB, 1920 × 1080, room light): reads up to about
   25–30 cm. Laptop camera (1280 × 720): only up to about 15 cm. Reason: the QR's squares are 0.58 mm; the decoder
   needs about 2–3 camera pixels per square. Decision: keep the labels; the installer scans the label up close
-  (20–30 cm), then steps back for the pin check. To do: 10 tries each at 20, 25, 30, 35 cm for the report.
+  (20–30 cm), then steps back for the pin check.
+- Decode rate, phone camera (K80S via iVCam over USB, 1920 × 1080, room light), 10 tries each:
+
+  | Distance | Read | Note |
+  | --- | --- | --- |
+  | 20 cm | 10/10 | |
+  | 25 cm | 10/10 | |
+  | 30 cm | 6/10 | |
+  | 35 cm | 0/10, then 10/10 | read every time after tapping the QR on the phone screen to focus |
+
+  So focus limits the distance more than pixels do: at 35 cm the image was blurred until focused. ARCore uses fixed
+  focus by default; to do: ask Xiaoxin to turn on Auto Focus on the AR camera. App text changed (agreed with the team):
+  "Hold the phone 20 to 30 cm from the cable label"; if nothing is found, "Move closer to the label" instead of
+  "Label missing"; the label search now waits 6 s instead of 2 s.
