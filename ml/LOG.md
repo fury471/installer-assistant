@@ -29,3 +29,7 @@
 
 ## 2026-10-23
 - Door 2 added to `AxisCatalog.cs` (green 4-pin block, − IO11 − IO12); domain tests updated, all pass. Agreed with the team.
+- QR scanning in the app: ZXing.Net 0.16.11 added (`Assets/_Project/ThirdParty/ZXing/`), `ZXING_NET` set for Android
+  and Windows. Live mode in the Editor read a printed label through the laptop's own camera. Offline check on session
+  photos: C01 and R01 labels read at full size and at 1920 px, nothing at 640 px; not read with two labels in view
+  (C02) or with flash glare and tilt (C05). Next: decode rate, 10 tries each at 30, 45 and 60 cm.
