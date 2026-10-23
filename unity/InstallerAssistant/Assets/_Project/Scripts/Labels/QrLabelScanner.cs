@@ -39,8 +39,21 @@ namespace InstallerAssistant.Labels
                 }
                 yield break;
             }
-            string text; ImagePoint[] corners;
-            if (!Decode(frame, out text, out corners)) { done(new LabelScan { Status = LabelScanStatus.NotFound, FrameId = id }); yield break; }
+            string text = null; ImagePoint[] corners = new ImagePoint[0]; bool found = false;
+            if (frame != null && frame.Format == FramePixels.Rgba32)
+            {
+                // decode on a worker thread, so the camera picture stays smooth while ZXing searches the frame
+                var task = System.Threading.Tasks.Task.Run(() =>
+                {
+                    string t; ImagePoint[] c;
+                    found = Decode(frame, out t, out c);
+                    text = t; corners = c;
+                });
+                while (!task.IsCompleted) yield return null;
+                if (task.IsFaulted) { Debug.LogWarning("[InstallerAssistant] QR decoding failed: " + task.Exception); found = false; }
+            }
+            else found = Decode(frame, out text, out corners);   // JPEG frames need Texture2D: main thread only
+            if (!found) { done(new LabelScan { Status = LabelScanStatus.NotFound, FrameId = id }); yield break; }
             if (!CableLabel.TryParse(text, out label))
             {
                 Debug.Log("[InstallerAssistant] QR code is not a cable label: " + text);
@@ -50,7 +63,8 @@ namespace InstallerAssistant.Labels
             done(new LabelScan { Status = LabelScanStatus.Found, Label = label, FrameId = id, Corners = corners });
         }
 
-        /// <summary>Decodes a QR code in the frame; corners are normalised to the frame (x right, y down).</summary>
+        /// <summary>Decodes a QR code in the frame; corners are normalised to the frame (x right, y down).
+        /// Safe on a worker thread for RGBA32 frames (no Unity objects are touched on that path).</summary>
         public static bool Decode(CameraFrame frame, out string text, out ImagePoint[] corners)
         {
             text = null; corners = new ImagePoint[0];

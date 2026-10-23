@@ -33,3 +33,7 @@
   and Windows. Live mode in the Editor read a printed label through the laptop's own camera. Offline check on session
   photos: C01 and R01 labels read at full size and at 1920 px, nothing at 640 px; not read with two labels in view
   (C02) or with flash glare and tilt (C05). Next: decode rate, 10 tries each at 30, 45 and 60 cm.
+- QR reading distance with the phone camera (K80S via iVCam over USB, 1920 × 1080, room light): reads up to about
+  25–30 cm. Laptop camera (1280 × 720): only up to about 15 cm. Reason: the QR's squares are 0.58 mm; the decoder
+  needs about 2–3 camera pixels per square. Decision: keep the labels; the installer scans the label up close
+  (20–30 cm), then steps back for the pin check. To do: 10 tries each at 20, 25, 30, 35 cm for the report.

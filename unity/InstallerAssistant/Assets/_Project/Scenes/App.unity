@@ -130,6 +130,7 @@ GameObject:
   - component: {fileID: 498911188}
   - component: {fileID: 498911187}
   - component: {fileID: 498911189}
+  - component: {fileID: 498911190}
   m_Layer: 0
   m_Name: Installer Assistant
   m_TagString: Untagged
@@ -196,6 +197,22 @@ MonoBehaviour:
   startEnd: 1
   speed: 1
   showOperatorHint: 1
+--- !u!114 &498911190
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 498911186}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c35ab1cea2be4509ad720c73f1696f61, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::InstallerAssistant.AR.ArCameraView
+  webcamFallback: 1
+  webcamName: e2eSoft iVCam
+  requestedWidth: 1920
+  requestedHeight: 1080
 --- !u!1 &558278288
 GameObject:
   m_ObjectHideFlags: 0
