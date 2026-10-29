@@ -100,3 +100,22 @@
   green wires on the blue/green housing; most in the tangled rows C02, C12); colour right on 84.5 % of wired pins.
   Zone survey (does a module hold any wire): 223 of 224 modules right (the miss: c06 flash front, Reader 1).
 - Reader patches (88): colour 78 % (logistic regression); too few photos to trust.
+
+## 2026-10-29 · M3 step 1: pin reader in the service
+- `ml/perception_service/pin_reader.py` + `ml/eval/train_pins.py`: extra-trees on the patch features, one model per
+  template (`ml/models/pins_A1610.joblib` 2.3 MB, `pins_A4020E.joblib` 0.4 MB; not in Git). Temperature scaling
+  fitted on the held-out (row-wise cross-validated) predictions. `classical.py` (now "classical-2") reads every pin
+  with it; without a model it falls back to the old colour baseline.
+- Cross-validated on session 1 (whole rows held out; the shipped model is then trained on all of session 1):
+
+  | Template | Pins | Pins right | Wire or not | Missed / false wires | Colour on wired pins | ECE before → after | Confident (≥ 0.8): share, right, wrong |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | A1610 board | 1344 | 97.1 % | 97.4 % | 35 of 252 / 0 | 84.5 % | 0.048 → 0.007 | 93.8 %, 99.0 %, 13 |
+  | A4020E reader | 88 | 80.7 % | 100 % | 0 / 0 | 80.7 % | 0.206 → 0.082 | 53.4 %, 91.5 %, 4 |
+
+  Board confusion (rows true none/red/black/green/yellow): missed wires are 3 red, 13 black, 14 green, 5 yellow;
+  1 black read as red, 3 green as yellow; no empty pin read as a wire.
+- Limit: the reader model never saw an empty slot (every reader row has 4 wires), so it cannot say "no wire" at the
+  reader end yet.
+- End to end: send_frame on s1_ctrl_c05_room_front: 24/24 pins right, 0.66 s (that photo was in the training data,
+  so this only shows the plumbing works). Tests: 29 passed.

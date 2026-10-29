@@ -6,7 +6,7 @@ is the summary to write the report from. References are given by their key in `d
 (full entries in `docs/references-ieee.md`).
 
 **Status:** M0 done (except session 2) · M1 done (except scanning through the AR camera) · M2 steps 1–4 done
-(locate on board and reader, in the service, evaluated); step 5 prototype (wire or not) · M3 started. Last update 29 Oct 2026.
+(locate on board and reader, in the service, evaluated); step 5 done (wire or not, zone survey) · M3: pin reader in the service. Last update 29 Oct 2026.
 
 All numbers below are on **session 1**, the photos the methods were developed and tuned on. They are previews.
 The report's final numbers come from **session 2**, kept sealed until the final week.
@@ -132,7 +132,18 @@ Data set: 1440 labelled patches from session 1 (`ml/eval/build_patches.py`).
 | Existing baseline (median colour, nearest of 8 references, no "empty" class) | 6 % | — | — | — | — |
 | Extra-trees on the 20 x 7 CIELAB patch (prototype) | 97.1 % | 97.4 % | 35 / 252 | 0 | 84.5 % |
 
-Zone survey (does a module hold any wire?): 223 / 224 modules right. Missed wires are mostly green (on the
+Zone survey (does a module hold any wire?): 223 / 224 modules right.
+
+**In the service** (`pin_reader.py`, trained by `ml/eval/train_pins.py`, one model per template, confidences
+temperature-scaled on the held-out predictions, `guo2017`; extra-trees: `geurts2006`):
+
+| Template | Pins | Pins right | Wire or not | Missed / false wires | Colour on wired pins | ECE before → after | Confident (≥ 0.8): share answered, right, wrong |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| A1610 board | 1344 | 97.1 % | 97.4 % | 35 of 252 / 0 | 84.5 % | 0.048 → 0.007 | 93.8 %, 99.0 %, 13 |
+| A4020E reader | 88 | 80.7 % | 100 % | 0 / 0 | 80.7 % | 0.206 → 0.082 | 53.4 %, 91.5 %, 4 |
+
+The 13 confident errors on the board are the dangerous case (wrong and sure); below 0.8 the app asks the
+installer. The reader model never saw an empty slot, so it cannot report a missing wire at the reader end yet. Missed wires are mostly green (on the
 green/blue housing) and black, many in the tangled rows. Reader end: 78 % colour on 88 slots, too little data.
 
 ## 4. Open (to fill in later)

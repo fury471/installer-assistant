@@ -171,3 +171,6 @@ Only details that were checked are given; where a page range or DOI could not be
 
 [56] M. Jahn, "ZXing.Net," version 0.16.11. [Online]. Available: https://github.com/micjahn/ZXing.Net  
 <sub>key `zxingnet`</sub>
+
+[57] P. Geurts, D. Ernst, and L. Wehenkel, "Extremely randomized trees," *Machine Learning*, vol. 63, no. 1, pp. 3–42, 2006, doi: 10.1007/s10994-006-6226-1.  
+<sub>key `geurts2006`</sub>
