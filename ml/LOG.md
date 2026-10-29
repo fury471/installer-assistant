@@ -168,3 +168,11 @@
   L*a*b* grid 79 %, edges 10 %, relative L* 6 %, percentiles 4 %, dark share per third < 1 % (unused).
   At confidence >= 0.8: shipped answers 97.5 % of pins with 0.76 % wrong; base 94.6 % with 0.94 % wrong.
 
+## 2026-10-29 · Saving live frames (for the bench day, 31 Oct)
+- `IA_SAVE_FRAMES=<folder>` makes the service save every /read: the JPEG as the phone sent it (not re-encoded),
+  the request without the image + the answer + the time (JSON), and a line in index.csv (`frame_log.py`).
+  `ml/tools/review_frames.py <folder>` draws the answers on the frames and sums up per end: camera sizes, share of
+  frames with every pin found, service time median / 95th percentile. Tests: 33 passed.
+- Dry run with two session-1 photos through send_frame.py: both saved, every pin found, 0.66 s (board) and 3.4 s
+  (reader) on the slow test machine.
+
