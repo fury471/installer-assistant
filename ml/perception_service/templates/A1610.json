@@ -1,5 +1,5 @@
 {
-  "image": "A1610.jpg", "width": 1200, "height": 1600,
+  "image": "A1610.jpg", "width": 1200, "height": 1600, "patch_box": [-10, -10, 50, 10],
   "modules": {
     "A1610.READER1": [
       {"name": "\u2212", "x": 164, "y": 1148},

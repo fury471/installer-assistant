@@ -86,3 +86,17 @@
   one is really wrong (r03 flash tilt: up to 2.5 slots off, only 19 agreeing pairs; correct photos all have 34 or
   more). A4020E.json now asks for at least 30 agreeing pairs ("min_inliers"), so that frame says "not found"
   instead of a wrong slot. Chosen on session 1 from one bad case: check it again on session 2.
+
+## 2026-10-29 · M2 step 5: wire or no wire (start of M3)
+- `ml/perception_service/patches.py`: each frame is warped into the template's view with locate()'s homography;
+  every pin gets a patch of the same size and orientation ("patch_box" in the template JSON: board 60 x 20 px to
+  the right of the opening, where wires leave; reader 40 x 70 px below the slot). `ml/eval/build_patches.py` cut
+  1440 labelled patches from session 1 (1344 board, 96 reader) into data/patches/session1/ with labels.csv.
+- The existing colour reader (median colour of a crop at the pin, nearest of 8 reference colours, no "no wire"
+  answer): 6 % of board pins right. Not usable.
+- First learned classifier (prototype, not in the service yet): extra-trees on the patch shrunk to 20 x 7 in
+  CIELAB, classes none/red/black/green/yellow, cross-validated with whole rows held out (7 folds over 14 rows):
+  board pins 97.1 % right; wire-or-not 97.4 %, no false wires, 35 of 252 wires missed (14 green, 13 black: dark or
+  green wires on the blue/green housing; most in the tangled rows C02, C12); colour right on 84.5 % of wired pins.
+  Zone survey (does a module hold any wire): 223 of 224 modules right (the miss: c06 flash front, Reader 1).
+- Reader patches (88): colour 78 % (logistic regression); too few photos to trust.

@@ -6,7 +6,7 @@ is the summary to write the report from. References are given by their key in `d
 (full entries in `docs/references-ieee.md`).
 
 **Status:** M0 done (except session 2) · M1 done (except scanning through the AR camera) · M2 steps 1–4 done
-(locate on board and reader, in the service, evaluated) · M3 not started. Last update 29 Oct 2026.
+(locate on board and reader, in the service, evaluated); step 5 prototype (wire or not) · M3 started. Last update 29 Oct 2026.
 
 All numbers below are on **session 1**, the photos the methods were developed and tuned on. They are previews.
 The report's final numbers come from **session 2**, kept sealed until the final week.
@@ -117,6 +117,23 @@ the label.
   Live use helps (several frames, the phone moves), but the colour step must read where the wire is clearly visible.
 - Tuned on session 1; only one phone, one bench, two lighting conditions.
 - The reader method needs the LightGlue model (50 MB) on the laptop and is about 20× slower than the board's.
+
+## 3b. Wire or no wire, first colour results (M2 step 5, start of M3)
+
+**Pin patches:** the frame is warped into the template's view with locate()'s homography, so every pin's
+surroundings appear at the same size and the same way up whatever the phone's pose; a fixed window per pin is cut
+where its wire leaves (board: right of the opening; reader: below the slot; set in the template JSON).
+Data set: 1440 labelled patches from session 1 (`ml/eval/build_patches.py`).
+
+**Results** (session 1, cross-validated with whole wiring rows held out, so no row is both trained and tested):
+
+| Reader of the patch | Board pins right | Wire or not | Missed wires | False wires | Colour on wired pins |
+| --- | --- | --- | --- | --- | --- |
+| Existing baseline (median colour, nearest of 8 references, no "empty" class) | 6 % | — | — | — | — |
+| Extra-trees on the 20 x 7 CIELAB patch (prototype) | 97.1 % | 97.4 % | 35 / 252 | 0 | 84.5 % |
+
+Zone survey (does a module hold any wire?): 223 / 224 modules right. Missed wires are mostly green (on the
+green/blue housing) and black, many in the tangled rows. Reader end: 78 % colour on 88 slots, too little data.
 
 ## 4. Open (to fill in later)
 

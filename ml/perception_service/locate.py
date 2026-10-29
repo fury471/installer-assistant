@@ -76,6 +76,7 @@ class Located:
     pins: Dict[str, List[Tuple[float, float]]] = field(default_factory=dict)   # module -> (x, y) in frame pixels
     board_only: Dict[str, List[Tuple[float, float]]] = field(default_factory=dict)  # stage 1 alone, for drawing
     homography: Optional[np.ndarray] = None            # template -> frame (frame pixels)
+    shifts: Dict[str, Tuple[int, int]] = field(default_factory=dict)   # stage 2: block offsets (template pixels)
     matches: list = field(default_factory=list)        # (template point, frame point, inlier?) for drawing
 
 
@@ -105,7 +106,7 @@ def locate(template: Template, image: np.ndarray, refine_blocks: bool = True) ->
 
     shifts = _block_shifts(template, small, H) if refine_blocks else {}
     to_frame = np.diag([1 / s, 1 / s, 1.0]) @ H          # template -> full-size frame
-    result = Located(True, inliers, homography=to_frame,
+    result = Located(True, inliers, homography=to_frame, shifts=shifts,
                      matches=[(tuple(a), tuple(b / s), bool(k)) for a, b, k in zip(src, dst, mask.ravel())])
     for module, pins in template.modules.items():
         dx, dy = shifts.get(module, (0, 0))

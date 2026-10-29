@@ -1,5 +1,5 @@
 {
-  "image": "A4020E.jpg", "width": 1200, "height": 1600, "matcher": "lightglue", "min_inliers": 30,
+  "image": "A4020E.jpg", "width": 1200, "height": 1600, "patch_box": [-20, -10, 20, 60], "matcher": "lightglue", "min_inliers": 30,
   "modules": {
     "A4020E": [
       {"name": "+", "x": 557, "y": 550},
