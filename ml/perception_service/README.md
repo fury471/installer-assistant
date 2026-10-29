@@ -9,7 +9,7 @@ An image is `{"width", "height", "format": "jpeg", "data_b64", "intrinsics": [fx
 
 ## GET /health
 
-`{"status": "ok", "model": "classical-0"}` (or `dummy-correct` when started with `IA_READER=dummy`)
+`{"status": "ok", "model": "classical-1"}` (or `dummy-correct` when started with `IA_READER=dummy`)
 
 ## POST /read
 
@@ -38,7 +38,7 @@ An image is `{"width", "height", "format": "jpeg", "data_b64", "intrinsics": [fx
     {"module": "A1610.READER2", "located": true, "items": [{"colour": -1, "confidence": 0.9, "x": 0.41, "y": 0.62, "found": true}, "..."]},
     {"module": "A1610.DOOR1", "located": false, "items": ["..."]}
   ],
-  "model": "classical-0",
+  "model": "classical-1",
   "error": ""
 }
 ```

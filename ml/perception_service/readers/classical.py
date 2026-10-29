@@ -18,19 +18,38 @@ Steps 1-2 are TODO; 3 is implemented in colour.py.
 """
 from typing import List, Optional
 
+import cv2
 import numpy as np
 
 from ..colour import classify_patch, grey_world
+from ..locate import Template, locate as find_pins
 from ..schemas import CompareRequest, ModuleItems, ReadItem, ReadRequest
 from ..tracing import trace_items
 
 
 class ClassicalReader:
-    name = "classical-0"
+    name = "classical-1"
+
+    def __init__(self):
+        self.templates = {"A1610": Template.load("A1610"), "A4020E": Template.load("A4020E")}
+        self._last = None              # (frame, device, result): search once per frame, not once per module
 
     def locate(self, module: str, terminals: List[str], image: np.ndarray) -> List[Optional[tuple]]:
-        """Terminal positions (x, y normalised) or None per terminal of 'module'. TODO: template + homography."""
-        return [None] * len(terminals)
+        device = module.split(".")[0]                  # "A1610.READER1" -> "A1610"; "A4020E" -> "A4020E"
+        tpl = self.templates.get(device)
+        if tpl is None or module not in tpl.modules:
+            return [None] * len(terminals)
+        if self._last is None or self._last[0] is not image or self._last[1] != device:
+            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            res = find_pins(tpl, gray, refine_blocks=(device == "A1610"))
+            self._last = (image, device, res)
+        res = self._last[2]
+        if not res.found:
+            return [None] * len(terminals)
+        if len(res.pins[module]) != len(terminals):
+            return [None] * len(terminals)
+        h, w = image.shape[:2]
+        return [(x / w, y / h) for (x, y) in res.pins[module]]
 
     def read(self, req: ReadRequest, image: np.ndarray) -> List[ReadItem]:
         items = self._read_module(req.module, req.terminals, image)
