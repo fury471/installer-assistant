@@ -66,3 +66,8 @@
   | 640 | 50/56 | 0.18 | 79.4 % | 36/56 | 74 ms |
 
 - Tests: `ml/tests/test_locate.py` (known homography of the template, no board, same answer twice).
+- Same code on Yu's laptop (Windows, OpenCV 5.0.0, where the service runs) at 1920: 56/56 found, median error 0.14,
+  99.2 % of pins within half a spacing, 52/56 photos all right, 46 ms. The 8 pins counted wrong (c02 room front,
+  c05 room front, c11 flash tilt, c11 room tilt) still sit on the right opening, at its edge: about 0.5–0.6 spacing,
+  close to the annotation's own click error. Small differences between OpenCV builds tip these borderline pins.
+  Decision: no more tuning on session 1 (that would fit the method to these photos); the laptop's numbers count.
