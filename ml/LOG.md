@@ -148,4 +148,23 @@
   patch on the training side of each fold only (never on the held-out side); pin_reader.features adds the
   brightness features (model bundle "brightness": true; an older model without it still loads and uses the old
   features). Flags --no-augment, --no-brightness, --no-save reproduce the table. Tests: 30 passed.
+- Official run on Yu's laptop (Windows; patches rebuilt there, 2 reader photos "not found" so 88 reader slots):
+  board 98.7 % pins right, wire-or-not 99.0 %, 13 of 252 wires missed, 0 false, colour on wired pins 92.9 %,
+  T = 0.525, ECE 0.035 -> 0.005, answered at >= 0.8: 97.5 % with 10 wrong. Reader 80.7 %, ECE 0.175 -> 0.031,
+  answered 61.4 % with 3 wrong. Models in Git: pins_A1610.joblib 7.2 MB (was 2.3; 7x the training rows), A4020E 1.1 MB.
+- Same comparison on the laptop's patches (ml/eval/report_figures.py, cross-validated; "both" equals the official
+  run): base 97.2 % / 34 missed / 0 false / colour 85.3 % / 12 sure-and-wrong; taller 96.9 / 37 / 2 / 84.1 / 13;
+  brightness 97.8 / 27 / 0 / 88.1 / 11; augmentation 98.3 / 18 / 1 / 91.3 / 9; both 98.7 / 13 / 0 / 92.9 / 10.
+  Augmentation alone has one fewer sure-and-wrong pin; both is best on everything else, so both is kept.
+  The refinement fixed 19 pins and broke none; 18 are still wrong (7 of the 12 most confident at Reader 1 A/B,
+  where wires cross; the top one is U1's two-wire pin).
+
+## 2026-10-29 · Report figures
+- `ml/eval/report_figures.py` draws 8 figures from the data into docs/figures/report/ (PDF + PNG 300 dpi, IEEE
+  column / page width) with numbers.json and README.md (draft captions with the numbers): pipeline, locate_cdf,
+  ablation, confusion, confidence, examples, augmentation, importance. Slow parts cached per OS in ml/runs/report/.
+- New facts from the figures: the homography alone puts only 13.9 % of board pins within half a spacing (parallax:
+  the blocks stand above the board); block refinement brings it to 98.2 %. Shipped board model: feature groups
+  L*a*b* grid 79 %, edges 10 %, relative L* 6 %, percentiles 4 %, dark share per third < 1 % (unused).
+  At confidence >= 0.8: shipped answers 97.5 % of pins with 0.76 % wrong; base 94.6 % with 0.94 % wrong.
 

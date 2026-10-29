@@ -155,21 +155,31 @@ confident "mistake" (U1, green read as yellow) is the pin with two wires, where 
 curve is good where most pins are (confidence above 0.85) and unreliable in the sparsely populated middle range.
 
 **Refinements from the inspection (the last tuning on session 1).** Each change was tried once with the same
-row-wise cross-validation and kept only if it helped (board, 1344 pins, 252 wires):
+row-wise cross-validation and kept only if it helped (board, 1344 pins, 252 wires; Yu's laptop patches; figure
+`docs/figures/report/ablation.pdf`):
 
-| Change | Pins right | Missed wires | False wires | Colour on wired pins | Confident errors (>= 0.8) | Kept? |
+| Change | Pins right | Missed wires | False wires | Colour on wired pins | Wrong at >= 0.8 | Kept? |
 | --- | --- | --- | --- | --- | --- | --- |
-| Base (colour grid + percentiles) | 97.1 % | 35 | 0 | 84.5 % | 13 | — |
-| Taller window, for wires running low | 97.0 % | 35 | 1 | 84.5 % | 15 | no |
-| + brightness features (relative L*, horizontal edges, dark share per third) | 97.2 % | 31 | 1 | 85.7 % | 13 | in combination |
-| + augmentation (training copies shifted 2 px, turned 6 deg; training side only; `shorten2019`) | 97.8 % | 23 | 2 | 88.9 % | 12 | in combination |
-| **Brightness + augmentation (shipped)** | **98.2 %** | **18** | **1** | **90.9 %** | **9** (96.9 % answered) | yes |
+| Base (colour grid + percentiles) | 97.2 % | 34 | 0 | 85.3 % | 12 | — |
+| Taller window, for wires running low | 96.9 % | 37 | 2 | 84.1 % | 13 | no |
+| + brightness features (relative L*, horizontal edges, dark share per third) | 97.8 % | 27 | 0 | 88.1 % | 11 | in combination |
+| + augmentation (copies shifted 2 px, turned 6 deg; training side only; `shorten2019`) | 98.3 % | 18 | 1 | 91.3 % | 9 | in combination |
+| **Brightness + augmentation (shipped)** | **98.7 %** | **13** | **0** | **92.9 %** | **10** | yes |
 
 The brightness features answer the "dark wire in a dark opening" finding; augmentation answers "wires that run low
-or slanted". Reader end (88 slots): accuracy unchanged within one slot (80.7 % both ways), calibration better (ECE
-0.082 -> 0.031, answered 53 % -> 61 %); it needs more data (session 2, empty slots), not tuning. Measured on Linux
-(OpenCV 5.0.0, scikit-learn 1.7.2); the official numbers come from the model retrained on Yu's laptop. After this,
-session 1 is no longer used to choose methods (`cawley2010`); the next check is on live app frames (`torralba2011`).
+or slanted". The refinement fixed 19 pins and broke none. Augmentation alone has one fewer sure-and-wrong pin; the
+combination is better on every other measure. **Shipped board model (official, Yu's laptop):** wire-or-not 99.0 %,
+T = 0.525, ECE 0.035 -> 0.005; at >= 0.8 it answers 97.5 % of pins with 0.76 % wrong (base: 94.6 %, 0.94 %).
+Its importance: L*a*b* grid 79 %, edges 10 %, relative L* 6 %, percentiles 4 %, dark share per third < 1 %.
+Still wrong: 18 pins, mostly where wires cross at Reader 1 A/B, and U1's two-wire pin.
+Reader end (88 slots): 80.7 % both ways (one slot of noise between variants), ECE 0.082 -> 0.031, answered 53 % ->
+61 %; it needs more data (session 2, empty slots), not tuning. After this, session 1 is no longer used to choose
+methods (`cawley2010`); the next check is on live app frames (`torralba2011`).
+
+**Figures for the report** (`python -m ml.eval.report_figures`; PDF + PNG in `docs/figures/report/`, draft captions
+with their numbers in its README): pipeline, locate_cdf, ablation, confusion, confidence, examples, augmentation,
+importance. One fact first seen there: the homography alone puts only 13.9 % of board pins within half a spacing
+(parallax); refining each block brings it to 98.2 %.
 
 ## 4. Open (to fill in later)
 
@@ -193,3 +203,4 @@ session 1 is no longer used to choose methods (`cawley2010`); the next check is 
 | `ml/eval/build_patches.py` | Cuts the labelled pin patches (window + 6 px margin) |
 | `ml/eval/train_pins.py` | Cross-validates and trains the pin readers; `--no-augment`, `--no-brightness`, `--no-save` |
 | `ml/eval/inspect_pins.py` | Figures of what the pin reader looks at, calibration, confusion, mistakes |
+| `ml/eval/report_figures.py` | The report's figures (PDF + PNG) with numbers.json and draft captions |

@@ -1,0 +1,270 @@
+{
+ "pipeline": {
+  "photo": "s1_ctrl_c05_room_front",
+  "inliers": 39,
+  "pins": 24
+ },
+ "augmentation": {
+  "example": "s1_ctrl_c07_room_front__A1610.READER1__4.png",
+  "copies": [
+   "2 px right",
+   "2 px left",
+   "2 px down",
+   "2 px up",
+   "turned +6°",
+   "turned −6°"
+  ],
+  "margin_px": 6
+ },
+ "made_with": {
+  "os": "linux",
+  "opencv": "5.0.0",
+  "scikit-learn": "1.7.2",
+  "session": "session1"
+ },
+ "ablation_reader": {
+  "base": {
+   "pins": 88,
+   "wires": 88,
+   "pins_right": 0.8068181818181818,
+   "missed_wires": 0,
+   "false_wires": 0,
+   "colour_right_on_wired_pins": 0.8068181818181818,
+   "answered_at_threshold": 0.5340909090909091,
+   "errors_at_threshold": 4,
+   "ece_before": 0.20593749999999994,
+   "ece_after": 0.08190156895581191,
+   "temperature": 0.5558794432478614
+  },
+  "both": {
+   "pins": 88,
+   "wires": 88,
+   "pins_right": 0.8068181818181818,
+   "missed_wires": 0,
+   "false_wires": 0,
+   "colour_right_on_wired_pins": 0.8068181818181818,
+   "answered_at_threshold": 0.6136363636363636,
+   "errors_at_threshold": 3,
+   "ece_before": 0.1746590909090909,
+   "ece_after": 0.0313206008328324,
+   "temperature": 0.5771179447252366
+  }
+ },
+ "confusion_board": {
+  "base": {
+   "labels": [
+    "no wire",
+    "red",
+    "black",
+    "green",
+    "yellow"
+   ],
+   "matrix": [
+    [
+     1092,
+     0,
+     0,
+     0,
+     0
+    ],
+    [
+     2,
+     62,
+     0,
+     0,
+     0
+    ],
+    [
+     13,
+     0,
+     51,
+     0,
+     0
+    ],
+    [
+     15,
+     0,
+     0,
+     46,
+     3
+    ],
+    [
+     4,
+     0,
+     0,
+     0,
+     56
+    ]
+   ]
+  },
+  "both": {
+   "labels": [
+    "no wire",
+    "red",
+    "black",
+    "green",
+    "yellow"
+   ],
+   "matrix": [
+    [
+     1092,
+     0,
+     0,
+     0,
+     0
+    ],
+    [
+     1,
+     63,
+     0,
+     0,
+     0
+    ],
+    [
+     4,
+     0,
+     59,
+     1,
+     0
+    ],
+    [
+     6,
+     0,
+     1,
+     54,
+     3
+    ],
+    [
+     2,
+     0,
+     0,
+     0,
+     58
+    ]
+   ]
+  }
+ },
+ "ablation_board": {
+  "base": {
+   "pins": 1344,
+   "wires": 252,
+   "pins_right": 0.9724702380952381,
+   "missed_wires": 34,
+   "false_wires": 0,
+   "colour_right_on_wired_pins": 0.8531746031746031,
+   "answered_at_threshold": 0.9464285714285714,
+   "errors_at_threshold": 12,
+   "ece_before": 0.04761532738095235,
+   "ece_after": 0.014194896556112956,
+   "temperature": 0.5330891158297411
+  },
+  "taller": {
+   "pins": 1344,
+   "wires": 252,
+   "pins_right": 0.96875,
+   "missed_wires": 37,
+   "false_wires": 2,
+   "colour_right_on_wired_pins": 0.8412698412698413,
+   "answered_at_threshold": 0.9412202380952381,
+   "errors_at_threshold": 13,
+   "ece_before": 0.044698660714285736,
+   "ece_after": 0.00559116587915566,
+   "temperature": 0.5417968359049611
+  },
+  "brightness": {
+   "pins": 1344,
+   "wires": 252,
+   "pins_right": 0.9776785714285714,
+   "missed_wires": 27,
+   "false_wires": 0,
+   "colour_right_on_wired_pins": 0.8809523809523809,
+   "answered_at_threshold": 0.9553571428571429,
+   "errors_at_threshold": 11,
+   "ece_before": 0.0528143601190476,
+   "ece_after": 0.011199259215145769,
+   "temperature": 0.5050992035723841
+  },
+  "augment": {
+   "pins": 1344,
+   "wires": 252,
+   "pins_right": 0.9828869047619048,
+   "missed_wires": 18,
+   "false_wires": 1,
+   "colour_right_on_wired_pins": 0.9126984126984127,
+   "answered_at_threshold": 0.9694940476190477,
+   "errors_at_threshold": 9,
+   "ece_before": 0.034882812499999936,
+   "ece_after": 0.0031159762890163463,
+   "temperature": 0.5260894166423749
+  },
+  "both": {
+   "pins": 1344,
+   "wires": 252,
+   "pins_right": 0.9866071428571429,
+   "missed_wires": 13,
+   "false_wires": 0,
+   "colour_right_on_wired_pins": 0.9285714285714286,
+   "answered_at_threshold": 0.9754464285714286,
+   "errors_at_threshold": 10,
+   "ece_before": 0.035372023809523735,
+   "ece_after": 0.004683107556685594,
+   "temperature": 0.5251278275696833
+  },
+  "note": "session 1, cross-validated with whole wiring rows held out (7 folds); augmentation on the training side only"
+ },
+ "confidence_board": {
+  "base": {
+   "answered": 0.9464285714285714,
+   "error_rate_answered": 0.009433962264150943
+  },
+  "both": {
+   "answered": 0.9754464285714286,
+   "error_rate_answered": 0.007627765064836003
+  }
+ },
+ "examples_board": {
+  "fixed": 19,
+  "broken": 0,
+  "still_wrong": 18,
+  "still_wrong_shown": [
+   "s1_ctrl_u1_flash_front__A1610.READER1__3.png",
+   "s1_ctrl_c09_room_tilt__A1610.READER1__4.png",
+   "s1_ctrl_c02_flash_front__A1610.READER1__4.png",
+   "s1_ctrl_c06_flash_front__A1610.READER1__4.png",
+   "s1_ctrl_c09_room_front__A1610.READER1__4.png",
+   "s1_ctrl_c02_room_front__A1610.READER1__8.png",
+   "s1_ctrl_c05_room_front__A1610.READER1__3.png",
+   "s1_ctrl_c09_flash_tilt__A1610.READER1__4.png",
+   "s1_ctrl_c02_flash_tilt__A1610.READER1__4.png",
+   "s1_ctrl_u1_flash_tilt__A1610.READER1__3.png",
+   "s1_ctrl_c02_room_tilt__A1610.READER1__2.png",
+   "s1_ctrl_u2_flash_front__A1610.READER1__4.png"
+  ]
+ },
+ "locate": {
+  "board": {
+   "photos": 56,
+   "found": 56,
+   "within_half": 0.9821428571428571,
+   "stage1_within_half": 0.13913690476190477,
+   "median_error": 0.13936769658028025,
+   "median_ms": 110.09409150210558
+  },
+  "reader": {
+   "photos": 24,
+   "found": 22,
+   "within_half": 0.8863636363636364,
+   "stage1_within_half": 0.8863636363636364,
+   "median_error": 0.3407735273273086,
+   "median_ms": 2528.5714130004635
+  },
+  "note": "within_half counts found photos only; the photo-level score is in eval_locate"
+ },
+ "importance_board": {
+  "L*a*b* grid": 0.789545341481882,
+  "percentiles": 0.04212782551951764,
+  "relative L*": 0.06467904022799181,
+  "edges": 0.10045387455862788,
+  "dark share per third": 0.003193918211980707
+ }
+}
