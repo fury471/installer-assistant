@@ -147,3 +147,27 @@ Only details that were checked are given; where a page range or DOI could not be
 
 [48] C. Guo, G. Pleiss, Y. Sun, and K. Q. Weinberger, "On calibration of modern neural networks," in *Proc. 34th Int. Conf. Machine Learning (ICML)*, Sydney, Australia, 2017, pp. 1321–1330.  
 <sub>key `guo2017`</sub>
+
+[49] D. G. Lowe, "Distinctive image features from scale-invariant keypoints," *International Journal of Computer Vision*, vol. 60, no. 2, pp. 91–110, 2004, doi: 10.1023/B:VISI.0000029664.99615.94.  
+<sub>key `lowe2004`</sub>
+
+[50] D. Barath, J. Noskova, M. Ivashechkin, and J. Matas, "MAGSAC++, a fast, reliable and accurate robust estimator," in *Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)*, 2020, doi: 10.1109/CVPR42600.2020.00138.  
+<sub>key `barath2020`</sub>
+
+[51] J. P. Lewis, "Fast template matching," in *Proc. Vision Interface*, 1995, pp. 120–123.  
+<sub>key `lewis1995`</sub>
+
+[52] M. Tyszkiewicz, P. Fua, and E. Trulls, "DISK: Learning local features with policy gradient," in *Advances in Neural Information Processing Systems 33 (NeurIPS)*, 2020.  
+<sub>key `tyszkiewicz2020`</sub>
+
+[53] P. Lindenberger, P.-E. Sarlin, and M. Pollefeys, "LightGlue: Local feature matching at light speed," in *Proc. IEEE/CVF Int. Conf. Computer Vision (ICCV)*, 2023, pp. 17627–17638, doi: 10.1109/ICCV51070.2023.01616.  
+<sub>key `lindenberger2023`</sub>
+
+[54] M. J. Swain and D. H. Ballard, "Color indexing," *International Journal of Computer Vision*, vol. 7, no. 1, pp. 11–32, 1991.  
+<sub>key `swain1991`</sub>
+
+[55] F. Sim, "LightGlue-ONNX," release v2.0, 2024. [Online]. Available: https://github.com/fabio-sim/LightGlue-ONNX  
+<sub>key `lightglueonnx`</sub>
+
+[56] M. Jahn, "ZXing.Net," version 0.16.11. [Online]. Available: https://github.com/micjahn/ZXing.Net  
+<sub>key `zxingnet`</sub>
