@@ -2,9 +2,9 @@
 
     python ml\\tools\\locate_demo.py data\\photos\\session1\\renamed\\s1_ctrl_c05_flash_tilt.jpg
 
-Writes two pictures next to this project's data folder (data\\locate_demo\\):
+Works for board photos (_ctrl_) and reader photos (_rdr_). Writes two pictures to data\\locate_demo\\:
   *_matches.jpg   template (left) and photo (right); green lines = feature pairs RANSAC kept, red = thrown out
-  *_pins.jpg      the 24 pins: yellow = stage 1 (board only), green = after stage 2 (each block found again);
+  *_pins.jpg      the pins: yellow = stage 1 (board only), green = after stage 2 (each block found again);
                   pink rings = your annotation, if the photo has one
 """
 import json
@@ -20,12 +20,12 @@ from ml.perception_service.locate import Template, locate   # noqa: E402
 
 
 def main(photo: Path):
-    tpl = Template.load("A1610")
+    tpl = Template.load("A4020E" if "_rdr_" in photo.name else "A1610")   # reader photos: the reader template
     img = cv2.imread(str(photo))
     if img is None:
         raise SystemExit(f"Cannot read {photo}")
-    res = locate(tpl, cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
-    print(f"board found: {res.found}   inlier pairs: {res.inliers}")
+    res = locate(tpl, cv2.cvtColor(img, cv2.COLOR_BGR2RGB), refine_blocks=tpl.name == "A1610")
+    print(f"{tpl.name} found: {res.found}   matcher: {tpl.matcher}   inlier pairs: {res.inliers}")
     if not res.found:
         return
     out = ROOT / "data" / "locate_demo"

@@ -71,3 +71,18 @@
   c05 room front, c11 flash tilt, c11 room tilt) still sit on the right opening, at its edge: about 0.5–0.6 spacing,
   close to the annotation's own click error. Small differences between OpenCV builds tip these borderline pins.
   Decision: no more tuning on session 1 (that would fit the method to these photos); the laptop's numbers count.
+- Reader end (A4020-E), 24 reader photos at 1920: ORB found the reader on only 5/24 (the flag label hides most of
+  it and its QR code draws the features). Tried a colour-block method (light-green terminal block): 12/12 in room
+  light, but fails under flash. Chosen instead: DISK features + LightGlue (ICCV 2023) from the LightGlue-ONNX export
+  (Apache-2.0), set per template ("matcher": "lightglue" in A4020E.json); the board keeps ORB.
+  Result: found 23/24, median error 0.35 slot spacings, 82 % of slots within half a spacing, 15/24 photos all
+  right; flash photos work too. No stage 2 for the reader (tried: it made it worse).
+  Speed on Yu's laptop CPU (bench_lightglue.py): about 0.7 s per frame at 480 x 640, 1.5 s at 768 x 1024.
+  Model: python ml/tools/get_models.py (ml/models/, not in Git, checked by SHA-256).
+- Official numbers, Yu's laptop (Windows, OpenCV 5.0.0), session 1 at 1920, frames passed as RGB like the service:
+  board 56/56 found, 0.14 median error, 98.4 % of pins within half a spacing, 52/56 photos all right, 48 ms;
+  reader 23/24 found, 0.35 median error, 82.3 % of slots within half a spacing, 15/24 photos all right, 874 ms.
+- Reader safeguard: of the 9 reader photos not fully right, 7 are borderline (worst slot 0.5-0.73 spacings off) and
+  one is really wrong (r03 flash tilt: up to 2.5 slots off, only 19 agreeing pairs; correct photos all have 34 or
+  more). A4020E.json now asks for at least 30 agreeing pairs ("min_inliers"), so that frame says "not found"
+  instead of a wrong slot. Chosen on session 1 from one bad case: check it again on session 2.

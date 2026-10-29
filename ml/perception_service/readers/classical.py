@@ -18,7 +18,6 @@ Steps 1-2 are TODO; 3 is implemented in colour.py.
 """
 from typing import List, Optional
 
-import cv2
 import numpy as np
 
 from ..colour import classify_patch, grey_world
@@ -40,8 +39,7 @@ class ClassicalReader:
         if tpl is None or module not in tpl.modules:
             return [None] * len(terminals)
         if self._last is None or self._last[0] is not image or self._last[1] != device:
-            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-            res = find_pins(tpl, gray, refine_blocks=(device == "A1610"))
+            res = find_pins(tpl, image, refine_blocks=(device == "A1610"))   # RGB: LightGlue uses colour
             self._last = (image, device, res)
         res = self._last[2]
         if not res.found:
