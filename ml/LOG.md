@@ -50,3 +50,19 @@
   focus by default; to do: ask Xiaoxin to turn on Auto Focus on the AR camera. App text changed (agreed with the team):
   "Hold the phone 20 to 30 cm from the cable label"; if nothing is found, "Move closer to the label" instead of
   "Label missing"; the label search now waits 6 s instead of 2 s.
+
+## 2026-10-29 · M2 locate()
+- `ml/perception_service/locate.py`: stage 1 = ORB + ratio test + MAGSAC++ homography of the whole board; stage 2 =
+  the column of terminal blocks found again by normalised cross-correlation in the warped frame (the blocks stand
+  above the board, so stage 1 alone is about 0.7 pin spacings off), then each block within 5 px.
+- First version matched each block on its own: on C02 (two labels hide the board) Reader 1 slipped by one pin.
+  Fixed by matching the whole column first and using MAGSAC++ instead of RANSAC.
+- Session 1, 56 controller photos (`python -m ml.eval.eval_locate`), tuned on these photos, so a preview only:
+
+  | Frame (long side) | Found | Median error | Pins within half a spacing | Photos all right | Time |
+  | --- | --- | --- | --- | --- | --- |
+  | 4096 (as taken) | 56/56 | 0.13 | 100 % | 56/56 | 108 ms |
+  | 1920 | 56/56 | 0.13 | 100 % | 56/56 | 100 ms |
+  | 640 | 50/56 | 0.18 | 79.4 % | 36/56 | 74 ms |
+
+- Tests: `ml/tests/test_locate.py` (known homography of the template, no board, same answer twice).
