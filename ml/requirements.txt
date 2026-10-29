@@ -8,6 +8,7 @@ pillow>=10.2
 pytest>=8.0
 httpx>=0.27                   # FastAPI TestClient
 scikit-learn==1.7.2          # pin reader (extra-trees), ml/eval/train_pins.py; pinned: the shared model files need the same version
+matplotlib>=3.8               # figures: ml/eval/inspect_pins.py
 onnxruntime>=1.17            # LightGlue (ONNX) in locate() for the A4020-E; models: python ml/tools/get_models.py
 # Optional, add when you start on them:
 # anthropic>=0.40            # VLM reader / second opinion (key in secrets.json or an environment variable, never in Git)

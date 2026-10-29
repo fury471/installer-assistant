@@ -5,7 +5,9 @@ and save it for the service (M3).
     python -m ml.eval.train_pins --sessions session1
 
 Measured by cross-validation with whole wiring rows held out (a row's 4 photos never sit on both sides), so the
-numbers say how it does on wirings it has not seen. The temperature for calibrated confidences is fitted on those
+numbers say how it does on wirings it has not seen. Augmentation (shifted and turned copies, see
+pin_reader.augmented) is added to the training side of each fold only, never to the held-out side, so it cannot
+flatter the score. The temperature for calibrated confidences is fitted on those
 held-out predictions (Guo et al., 2017). Then one model per template is trained on all patches and saved to
 ml/models/pins_<template>.joblib. Session 2 is never used here: it is the final test.
 """
@@ -25,23 +27,52 @@ from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import GroupKFold
 
 from ml.eval import metrics
-from ml.perception_service.pin_reader import FEATURE_SIZE, MODELS, NO_WIRE, calibrated, features
+from ml.perception_service.patches import patch_box, window
+from ml.perception_service.pin_reader import FEATURE_SIZE, MODELS, NO_WIRE, augmented, calibrated, features
 
 NAMES = {NO_WIRE: "none", 0: "red", 1: "black", 2: "green", 3: "yellow", 4: "white", 5: "brown", 6: "blue", 7: "orange"}
 
 
-def load(data, sessions, template):
-    X, y, groups = [], [], []
+def load_patches(data, sessions, template):
+    """The located patches of one template as cut by build_patches (window + margin): patches, colours,
+    wiring-row groups, files and margins."""
+    patches, y, groups, files, margins = [], [], [], [], []
     for session in sessions:
         folder = os.path.join(data, "patches", session)
         for r in csv.DictReader(open(os.path.join(folder, "labels.csv"), encoding="utf-8")):
             if r["located"] != "True" or (r["module"] == "A4020E") != (template == "A4020E"):
                 continue
-            patch = cv2.cvtColor(cv2.imread(os.path.join(folder, r["file"])), cv2.COLOR_BGR2RGB)
-            X.append(features(patch, FEATURE_SIZE[template]))
+            files.append(os.path.join(folder, r["file"]))
+            patches.append(cv2.cvtColor(cv2.imread(files[-1]), cv2.COLOR_BGR2RGB))
             y.append(int(r["colour"]))
             groups.append(session + "/" + r["row"])
-    return np.array(X), np.array(y), np.array(groups)
+            margins.append(int(r.get("margin") or 0))
+    return patches, np.array(y), np.array(groups), files, margins
+
+
+def load(data, sessions, template, brightness=True):
+    """Features of every located patch (its pin window only), colours and wiring-row groups."""
+    patches, y, groups, _, margins = load_patches(data, sessions, template)
+    X = np.array([features(window(p, m), FEATURE_SIZE[template], brightness) for p, m in zip(patches, margins)])
+    return X, y, groups
+
+
+def load_augmented(data, sessions, template, brightness=True):
+    """Features of 6 shifted / turned copies per patch: array (patches, 6, features)."""
+    patches, _, _, _, margins = load_patches(data, sessions, template)
+    if min(margins, default=0) < 3:
+        raise SystemExit("augmentation needs patches cut with a margin: run  python -m ml.eval.build_patches  again")
+    x0, y0, _, _ = patch_box(template)
+    return np.array([[features(c, FEATURE_SIZE[template], brightness) for c in augmented(p, m, (m - x0, m - y0))]
+                     for p, m in zip(patches, margins)])
+
+
+def with_copies(X, y, Xa, idx):
+    """Training set of the patches 'idx' plus, if given, their augmented copies."""
+    if Xa is None:
+        return X[idx], y[idx]
+    return (np.concatenate([X[idx], Xa[idx].reshape(-1, X.shape[1])]),
+            np.concatenate([y[idx], np.repeat(y[idx], Xa.shape[1])]))
 
 
 def new_model():
@@ -62,16 +93,21 @@ def main():
     ap.add_argument("--sessions", nargs="+", default=["session1"])
     ap.add_argument("--templates", nargs="+", default=["A1610", "A4020E"])
     ap.add_argument("--threshold", type=float, default=0.8, help="confidence below this: ask the installer")
+    ap.add_argument("--no-augment", action="store_true", help="train without the shifted / turned copies")
+    ap.add_argument("--no-brightness", action="store_true", help="colour features only (the first model)")
+    ap.add_argument("--no-save", action="store_true", help="only measure; keep the saved model")
     a = ap.parse_args()
+    brightness = not a.no_brightness
     os.makedirs(MODELS, exist_ok=True)
     for template in a.templates:
-        X, y, groups = load(a.data, a.sessions, template)
+        X, y, groups = load(a.data, a.sessions, template, brightness)
+        Xa = None if a.no_augment else load_augmented(a.data, a.sessions, template, brightness)
         rows = sorted(set(groups))
         folds = min(7, len(rows))
         classes = sorted(set(y.tolist()))
         proba = np.zeros((len(y), len(classes)))
         for train, test in GroupKFold(n_splits=folds).split(X, y, groups):
-            m = new_model().fit(X[train], y[train])
+            m = new_model().fit(*with_copies(X, y, Xa, train))
             p = np.zeros((len(test), len(classes)))
             p[:, [classes.index(c) for c in m.classes_]] = m.predict_proba(X[test])
             proba[test] = p
@@ -83,6 +119,7 @@ def main():
         wired = y != NO_WIRE
         report = {
             "template": template, "pins": int(len(y)), "rows": len(rows), "folds": folds,
+            "brightness_features": brightness, "augmented_copies": 0 if Xa is None else int(Xa.shape[1]),
             "pins_right": round(float(ok.mean()), 3),
             "wire_or_not_right": round(float(np.mean((pred != NO_WIRE) == wired)), 3),
             "missed_wires": int(np.sum(wired & (pred == NO_WIRE))), "wires": int(wired.sum()),
@@ -96,12 +133,16 @@ def main():
                                               "matrix": confusion_matrix(y, pred, labels=classes).tolist()},
         }
         print(json.dumps(report, indent=1))
-        model = new_model().fit(X, y)
+        if a.no_save:
+            continue
+        model = new_model().fit(*with_copies(X, y, Xa, np.arange(len(y))))
         info = {"trained_on": a.sessions, "date": date.today().isoformat(), "pins": int(len(y)),
-                "sklearn": sklearn.__version__, "cross_validated": {k: report[k] for k in
+                "sklearn": sklearn.__version__, "brightness_features": brightness,
+                "augmented_copies": report["augmented_copies"], "cross_validated": {k: report[k] for k in
                 ("pins_right", "wire_or_not_right", "colour_right_on_wired_pins", "ece_after")}}
         path = MODELS / f"pins_{template}.joblib"
-        joblib.dump({"model": model, "temperature": temperature, "size": FEATURE_SIZE[template], "info": info},
+        joblib.dump({"model": model, "temperature": temperature, "size": FEATURE_SIZE[template],
+                     "brightness": brightness, "info": info},
                     path, compress=3)
         os.makedirs("ml/runs", exist_ok=True)
         with open(f"ml/runs/train_pins_{template}.json", "w", encoding="utf-8") as f:

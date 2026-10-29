@@ -174,3 +174,13 @@ Only details that were checked are given; where a page range or DOI could not be
 
 [57] P. Geurts, D. Ernst, and L. Wehenkel, "Extremely randomized trees," *Machine Learning*, vol. 63, no. 1, pp. 3–42, 2006, doi: 10.1007/s10994-006-6226-1.  
 <sub>key `geurts2006`</sub>
+
+[58] G. C. Cawley and N. L. C. Talbot, "On over-fitting in model selection and subsequent selection bias in performance evaluation," *Journal of Machine Learning Research*, vol. 11, pp. 2079–2107, 2010.  
+<sub>key `cawley2010`</sub>
+
+[59] A. Torralba and A. A. Efros, "Unbiased look at dataset bias," in *Proc. IEEE Conf. Computer Vision and Pattern Recognition (CVPR)*, 2011, pp. 1521–1528, doi: 10.1109/CVPR.2011.5995347.  
+<sub>key `torralba2011`</sub>
+
+[60] C. Shorten and T. M. Khoshgoftaar, "A survey on image data augmentation for deep learning," *Journal of Big Data*, vol. 6, art. 60, 2019, doi: 10.1186/s40537-019-0197-0.  
+<sub>key `shorten2019`</sub>
+

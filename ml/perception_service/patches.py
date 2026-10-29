@@ -17,8 +17,10 @@ import numpy as np
 from .locate import TEMPLATES, Located, Template
 
 
-def patch_box(template: Template) -> List[int]:
-    meta = json.loads((TEMPLATES / (template.name + ".json")).read_text(encoding="utf-8"))
+def patch_box(template) -> List[int]:
+    """The template's pin window [left, top, right, bottom]; 'template' is a Template or its name."""
+    name = template if isinstance(template, str) else template.name
+    meta = json.loads((TEMPLATES / (name + ".json")).read_text(encoding="utf-8"))
     return meta.get("patch_box", [-10, -10, 50, 10])
 
 
@@ -29,11 +31,14 @@ def rectify(template: Template, located: Located, rgb: np.ndarray) -> np.ndarray
                                borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
 
 
-def pin_patches(template: Template, located: Located, rgb: np.ndarray, view: np.ndarray = None) -> Dict[str, List[np.ndarray]]:
-    """module -> one RGB patch per pin, in the template's pin order. Pass 'view' to reuse a rectified frame."""
+def pin_patches(template: Template, located: Located, rgb: np.ndarray, view: np.ndarray = None,
+                margin: int = 0) -> Dict[str, List[np.ndarray]]:
+    """module -> one RGB patch per pin, in the template's pin order. Pass 'view' to reuse a rectified frame.
+    margin > 0 cuts that many extra pixels on every side (training uses them to shift and turn patches)."""
     if view is None:
         view = rectify(template, located, rgb)
     x0, y0, x1, y1 = patch_box(template)
+    x0, y0, x1, y1 = x0 - margin, y0 - margin, x1 + margin, y1 + margin
     th, tw = view.shape[:2]
     out = {}
     for module, pins in template.modules.items():
@@ -48,3 +53,8 @@ def pin_patches(template: Template, located: Located, rgb: np.ndarray, view: np.
             patches.append(patch)
         out[module] = patches
     return out
+
+
+def window(patch: np.ndarray, margin: int) -> np.ndarray:
+    """The pin window from a patch cut with 'margin' extra pixels on every side."""
+    return patch[margin:patch.shape[0] - margin, margin:patch.shape[1] - margin] if margin else patch

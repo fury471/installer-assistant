@@ -119,3 +119,33 @@
   reader end yet.
 - End to end: send_frame on s1_ctrl_c05_room_front: 24/24 pins right, 0.66 s (that photo was in the training data,
   so this only shows the plumbing works). Tests: 29 passed.
+- Retrained on Yu's laptop (the model shared in Git): board 97.2 % pins right, wire-or-not 97.5 % (34 missed, 0
+  false), colour on wired pins 85.3 %, ECE 0.048 -> 0.014, confident (>= 0.8) on 94.6 % of pins with 99.1 % right
+  and 12 confident errors. Reader unchanged (80.7 %).
+- `ml/eval/inspect_pins.py`: what the model looks at (feature importance as a map of the patch), calibration curves,
+  confusion, the mistakes most-confident-first. Findings: it relies on colour (a*, b*) where the wire leaves the
+  opening and hardly on brightness, so dark (black) wires in a dark opening are missed; missed wires often run low
+  or slanted in the window; the top "mistake" is U1's two-wire pin (yellow is also there).
+
+## 2026-10-29 · M3 step 2: refinements from the inspection (last tuning on session 1)
+- Rule: each change is tried once, with the same row-wise cross-validation, and kept only if it helps; after this,
+  no more tuning on session 1 (otherwise the method fits these photos, not the task).
+- Board (A1610, 1344 pins, 252 wires; Linux, OpenCV 5.0.0, scikit-learn 1.7.2):
+
+  | Change | Pins right | Missed wires | False wires | Colour on wired pins | Confident (>= 0.8): answered, wrong | Kept? |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | Base (colour grid + percentiles) | 97.1 % | 35 | 0 | 84.5 % | 93.8 %, 13 | — |
+  | Taller window (-10,-10,50,14), for wires running low | 97.0 % | 35 | 1 | 84.5 % | —, 15 | no |
+  | + brightness features (L relative to the patch, horizontal edges, dark share per third) | 97.2 % | 31 | 1 | 85.7 % | —, 13 | with augmentation |
+  | + augmentation (training copies shifted 2 px and turned 6 deg) | 97.8 % | 23 | 2 | 88.9 % | —, 12 | with brightness |
+  | + brightness + augmentation | 98.2 % | 18 | 1 | 90.9 % | 96.9 %, 9 | yes |
+
+  Missed wires halved (35 -> 18), confident errors 13 -> 9, ECE 0.006.
+- Reader (A4020E, 88 slots, all wired): pins right 80.7 % (base) / 79.5 % (brightness) / 81.8 % (augmentation) /
+  80.7 % (both): one slot either way, i.e. noise. With both: ECE 0.082 -> 0.031, answered at >= 0.8 53 % -> 61 %,
+  confident errors 4 -> 3. Same settings for both ends to keep one rule; the reader needs more data, not tuning.
+- Code: build_patches cuts each patch with a 6 px margin (labels.csv column "margin"); train_pins adds 6 copies per
+  patch on the training side of each fold only (never on the held-out side); pin_reader.features adds the
+  brightness features (model bundle "brightness": true; an older model without it still loads and uses the old
+  features). Flags --no-augment, --no-brightness, --no-save reproduce the table. Tests: 30 passed.
+

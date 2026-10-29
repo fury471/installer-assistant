@@ -139,12 +139,37 @@ temperature-scaled on the held-out predictions, `guo2017`; extra-trees: `geurts2
 
 | Template | Pins | Pins right | Wire or not | Missed / false wires | Colour on wired pins | ECE before → after | Confident (≥ 0.8): share answered, right, wrong |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| A1610 board | 1344 | 97.1 % | 97.4 % | 35 of 252 / 0 | 84.5 % | 0.048 → 0.007 | 93.8 %, 99.0 %, 13 |
+| A1610 board | 1344 | 97.2 % | 97.5 % | 34 of 252 / 0 | 85.3 % | 0.048 → 0.014 | 94.6 %, 99.1 %, 12 |
 | A4020E reader | 88 | 80.7 % | 100 % | 0 / 0 | 80.7 % | 0.206 → 0.082 | 53.4 %, 91.5 %, 4 |
 
-The 13 confident errors on the board are the dangerous case (wrong and sure); below 0.8 the app asks the
+(Numbers from the model trained on Yu's laptop, the one shared in Git.) The 12 confident errors on the board are the dangerous case (wrong and sure); below 0.8 the app asks the
 installer. The reader model never saw an empty slot, so it cannot report a missing wire at the reader end yet. Missed wires are mostly green (on the
 green/blue housing) and black, many in the tangled rows. Reader end: 78 % colour on 88 slots, too little data.
+
+**Inside the model** (`python -m ml.eval.inspect_pins`; figures in `docs/figures/pins_A1610_*.png`):
+400 extremely randomised trees, depth about 17, about 100 leaves each; input 429 numbers per pin (the patch shrunk
+to 20 x 7 pixels in CIELAB + 9 percentiles). It relies mostly on colour (a*, b*) just where the wire leaves the
+opening and on the most saturated pixels (a*, b* 95th percentile), and little on brightness (L*), which explains
+the missed black wires (dark wire, dark opening). Most "missed" wires run low in the window or at a slant; the most
+confident "mistake" (U1, green read as yellow) is the pin with two wires, where yellow is also right. The calibration
+curve is good where most pins are (confidence above 0.85) and unreliable in the sparsely populated middle range.
+
+**Refinements from the inspection (the last tuning on session 1).** Each change was tried once with the same
+row-wise cross-validation and kept only if it helped (board, 1344 pins, 252 wires):
+
+| Change | Pins right | Missed wires | False wires | Colour on wired pins | Confident errors (>= 0.8) | Kept? |
+| --- | --- | --- | --- | --- | --- | --- |
+| Base (colour grid + percentiles) | 97.1 % | 35 | 0 | 84.5 % | 13 | — |
+| Taller window, for wires running low | 97.0 % | 35 | 1 | 84.5 % | 15 | no |
+| + brightness features (relative L*, horizontal edges, dark share per third) | 97.2 % | 31 | 1 | 85.7 % | 13 | in combination |
+| + augmentation (training copies shifted 2 px, turned 6 deg; training side only; `shorten2019`) | 97.8 % | 23 | 2 | 88.9 % | 12 | in combination |
+| **Brightness + augmentation (shipped)** | **98.2 %** | **18** | **1** | **90.9 %** | **9** (96.9 % answered) | yes |
+
+The brightness features answer the "dark wire in a dark opening" finding; augmentation answers "wires that run low
+or slanted". Reader end (88 slots): accuracy unchanged within one slot (80.7 % both ways), calibration better (ECE
+0.082 -> 0.031, answered 53 % -> 61 %); it needs more data (session 2, empty slots), not tuning. Measured on Linux
+(OpenCV 5.0.0, scikit-learn 1.7.2); the official numbers come from the model retrained on Yu's laptop. After this,
+session 1 is no longer used to choose methods (`cawley2010`); the next check is on live app frames (`torralba2011`).
 
 ## 4. Open (to fill in later)
 
@@ -165,3 +190,6 @@ green/blue housing) and black, many in the tangled rows. Reader end: 78 % colour
 | `ml/tools/locate_demo.py` | Pictures of the matches and the found pins for one photo |
 | `ml/tools/send_frame.py` | Sends one photo to the running service like the app |
 | `data/_downloads/bench_lightglue.py` | LightGlue speed on this laptop |
+| `ml/eval/build_patches.py` | Cuts the labelled pin patches (window + 6 px margin) |
+| `ml/eval/train_pins.py` | Cross-validates and trains the pin readers; `--no-augment`, `--no-brightness`, `--no-save` |
+| `ml/eval/inspect_pins.py` | Figures of what the pin reader looks at, calibration, confusion, mistakes |
