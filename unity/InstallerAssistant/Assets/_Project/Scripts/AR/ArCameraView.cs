@@ -206,6 +206,17 @@ namespace InstallerAssistant.AR
                 name = devices[0].name;
                 foreach (var d in devices) if (!d.isFrontFacing) { name = d.name; break; }
             }
+            else
+            {
+                bool present = false;
+                foreach (var d in devices) if (d.name == name) { present = true; break; }
+                if (!present)                     // a name saved for the laptop (e.g. iVCam) must not black out the phone
+                {
+                    Debug.LogWarning($"[ArCameraView] webcam '{name}' is not on this device; using the back camera instead.");
+                    name = devices[0].name;
+                    foreach (var d in devices) if (!d.isFrontFacing) { name = d.name; break; }
+                }
+            }
             cam = new WebCamTexture(name, requestedWidth, requestedHeight);
             cam.Play();
         }
