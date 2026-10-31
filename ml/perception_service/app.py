@@ -7,6 +7,8 @@ Reader: environment variable IA_READER = classical (default) | dummy | dummy-unk
 The dummy readers give the same answer for every photo: for testing the plumbing only, never for a demo.
 dummy-elsewhere puts the cable in the first other module, to try the zone check ("move the cable to Reader 1").
 dummy-tangled traces the wire on pin 2 to another cable, to try the bundle check ("the wire on 12V is from another cable").
+Live frames: set IA_SAVE_FRAMES to a folder (e.g. data/live/2026-10-31) to save every frame the app sends with the
+request and the answer (frame_log.py); ml/tools/review_frames.py draws the answers onto them.
 """
 import os
 import time
@@ -14,11 +16,13 @@ import time
 from fastapi import FastAPI
 
 from . import images
+from .frame_log import FrameLog
 from .readers import get_reader
 from .schemas import CompareRequest, CompareResponse, ModuleItems, ReadItem, ReadRequest, ReadResponse
 
 app = FastAPI(title="Installer Assistant perception service", version="0.1")
 reader = get_reader(os.environ.get("IA_READER", "classical"))
+frame_log = FrameLog.from_environment()     # None unless IA_SAVE_FRAMES is set
 
 
 @app.get("/health")
@@ -29,19 +33,33 @@ def health():
 @app.post("/read", response_model=ReadResponse)
 def read(req: ReadRequest) -> ReadResponse:
     t0 = time.perf_counter()
+    resp, size = _read(req)
+    if frame_log is not None:
+        frame_log.save(req, resp, (time.perf_counter() - t0) * 1000, size)
+    return resp
+
+
+def _read(req: ReadRequest):
+    """The answer, and the decoded image's (width, height) for the frame log ((0, 0) if it could not be decoded)."""
+    t0 = time.perf_counter()
+    size = (0, 0)
     if not req.image.present:
-        return ReadResponse(frame_id=req.frame_id, items=[ReadItem() for _ in req.terminals], model=reader.name, error="no image")
+        return ReadResponse(frame_id=req.frame_id, items=[ReadItem() for _ in req.terminals], model=reader.name,
+                            error="no image"), size
     try:
         image = images.decode(req.image)
+        size = (image.shape[1], image.shape[0])
         items = reader.read(req, image)
     except Exception as e:  # the app shows "read again"; the log says why
-        return ReadResponse(frame_id=req.frame_id, items=[ReadItem() for _ in req.terminals], model=reader.name, error=repr(e))
+        return ReadResponse(frame_id=req.frame_id, items=[ReadItem() for _ in req.terminals], model=reader.name,
+                            error=repr(e)), size
     if len(items) != len(req.terminals):
         return ReadResponse(frame_id=req.frame_id, items=[ReadItem() for _ in req.terminals], model=reader.name,
-                            error="reader returned %d items for %d terminals" % (len(items), len(req.terminals)))
+                            error="reader returned %d items for %d terminals" % (len(items), len(req.terminals))), size
     others = survey(req, image)
-    print("read %s %s (+%d modules surveyed): %.0f ms" % (req.end, req.module, len(others), (time.perf_counter() - t0) * 1000))
-    return ReadResponse(frame_id=req.frame_id, items=items, other_blocks=others, model=reader.name)
+    print("read %s %s (+%d modules surveyed): %dx%d image, %.0f ms" % (req.end, req.module, len(others),
+          image.shape[1], image.shape[0], (time.perf_counter() - t0) * 1000))   # width x height the phone sent
+    return ReadResponse(frame_id=req.frame_id, items=items, other_blocks=others, model=reader.name), size
 
 
 def survey(req: ReadRequest, image) -> list:

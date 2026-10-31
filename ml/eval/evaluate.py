@@ -1,6 +1,7 @@
 """Runs a reader over annotated photos and writes the accuracy report.
 
-Annotations (data/annotations/*.json, one file per photo; photos stay on the shared drive, see .gitignore):
+Annotations (data/annotations/<session>/*.json, one file per photo, written by ml/tools/annotate.py; photos stay on
+the shared drive, see .gitignore):
 {
   "image": "photos/ctrl_ab_swapped_01.jpg",    # relative to the data folder
   "end": "controller",                         # or "device"
@@ -21,7 +22,8 @@ A wrong-module photo (the cable on Reader 2 while its label says Reader 1) has a
 cable's colours under A1610.READER2. A tangled photo has a second labelled bundle whose wire sits on a pin of this
 module; its terminal gets "cable": "other".
 
-    python -m ml.eval.evaluate --data data --reader classical --threshold 0.8 --out ml/runs/eval.json
+    python -m ml.eval.evaluate --data data --annotations annotations/session1 --reader classical --out ml/runs/eval.json
+--annotations is a folder under --data; every .json below it is used (so keep session 2 apart until the final test).
 """
 import argparse
 import base64
@@ -47,6 +49,7 @@ def load(path: str) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="data")
+    ap.add_argument("--annotations", default="annotations", help="folder under --data, e.g. annotations/session1")
     ap.add_argument("--reader", default="classical")
     ap.add_argument("--threshold", type=float, default=0.8)
     ap.add_argument("--out", default="ml/runs/eval.json")
@@ -56,7 +59,7 @@ def main() -> None:
     true, pred, conf, ok, perr, latency = [], [], [], [], [], []
     occ_true, occ_pred = [], []      # zone survey: does each module hold wires (truth vs reader)
     trace_total, trace_known, trace_right = 0, 0, 0   # bundle check: annotated wires, traced (not unknown), traced right
-    files = sorted(glob.glob(os.path.join(a.data, "annotations", "*.json")))
+    files = sorted(glob.glob(os.path.join(a.data, a.annotations, "**", "*.json"), recursive=True))
     for f in files:
         ann = load(f)
         img_path = os.path.join(a.data, ann["image"])

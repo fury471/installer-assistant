@@ -74,7 +74,7 @@ static class T
         Eq(AxisCatalog.OsdpReaderOnReader2.ControllerModule.Code + " " + AxisCatalog.OsdpReaderOnReader2.DeviceModule.Code, "A1610.READER2 A4020E", "rule modules");
         CableLabel bad;
         CableLabel.TryParse("IA|C09|D1|A1610.READER9|A4020E", out bad);
-        Eq(AxisCatalog.Resolve(bad, out problem) == null && problem.Contains("READER1, READER2, DOOR1"), true, "unknown module -> no rule, names the modules");
+        Eq(AxisCatalog.Resolve(bad, out problem) == null && problem.Contains("READER1, READER2, DOOR1, DOOR2"), true, "unknown module -> no rule, names the modules");
         Console.WriteLine("     " + problem);
         CableLabel.TryParse("IA|C09|D1|A4020E.X|A1610", out bad);
         Eq(AxisCatalog.Resolve(bad, out problem) == null, true, "device first -> no rule");
@@ -82,7 +82,7 @@ static class T
         CableLabel.TryParse("IA|C09|D1|A1610.DOOR1|A4020E", out bad);
         Eq(AxisCatalog.Resolve(bad, out problem) == null, true, "reader on a door module -> no rule");
         Console.WriteLine("     " + problem);
-        Eq(string.Join(" ", AxisCatalog.OtherModules(AxisCatalog.OsdpReaderOnReader1).Select(m => m.Id)), "A1610.READER2 A1610.DOOR1", "other modules to survey");
+        Eq(string.Join(" ", AxisCatalog.OtherModules(AxisCatalog.OsdpReaderOnReader1).Select(m => m.Id)), "A1610.READER2 A1610.DOOR1 A1610.DOOR2", "other modules to survey");
 
         var rec = Rec(O, K, G, Y);   // orange on +, black on -, green on A, yellow on B (team's Demo2 cable)
         Eq(rec.ExpectedOnPin(1), K, "pin 1 expects black (-)");
