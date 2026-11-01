@@ -42,6 +42,8 @@ BLOCK_MARGIN = (75, 18, 35, 18)   # default block box around its pins: left, top
                                   # a template can set its own as "block_margin" in its JSON
 BLOCK_SEARCH = 45       # stage 2: how far the column of blocks may move (template px; pins are 24 px apart)
 BLOCK_TIGHT = 5         # then how far each block may move on its own, around the column's offset
+AGREE_MIN = 0.10        # a placed block must look at least this much like its own block in the reference photo
+                        # (colour ZNCC; session 1: correct placements >= 0.19, one block off <= 0.15)
 
 
 @dataclass
@@ -55,6 +57,7 @@ class Template:
     matcher: str = "orb"                    # "orb" or "lightglue", from the template's JSON
     block_margin: Tuple[int, int, int, int] = BLOCK_MARGIN   # stage 2: box around each module's pins
     min_inliers: int = MIN_INLIERS          # fewer agreeing pairs: "not found"; a template can ask for more
+    lab: Optional[np.ndarray] = None        # CIELAB of rgb, computed on first use (block check)
 
     @staticmethod
     def load(name: str) -> "Template":
@@ -77,6 +80,7 @@ class Located:
     board_only: Dict[str, List[Tuple[float, float]]] = field(default_factory=dict)  # stage 1 alone, for drawing
     homography: Optional[np.ndarray] = None            # template -> frame (frame pixels)
     shifts: Dict[str, Tuple[int, int]] = field(default_factory=dict)   # stage 2: block offsets (template pixels)
+    doubtful: Dict[str, str] = field(default_factory=dict)  # modules placed where they do not look right -> why
     matches: list = field(default_factory=list)        # (template point, frame point, inlier?) for drawing
 
 
@@ -108,12 +112,62 @@ def locate(template: Template, image: np.ndarray, refine_blocks: bool = True) ->
     to_frame = np.diag([1 / s, 1 / s, 1.0]) @ H          # template -> full-size frame
     result = Located(True, inliers, homography=to_frame, shifts=shifts,
                      matches=[(tuple(a), tuple(b / s), bool(k)) for a, b, k in zip(src, dst, mask.ravel())])
+    if len(template.modules) > 1:
+        result.doubtful = _check_blocks(template, image if image.ndim == 3 else None, to_frame, shifts)
     for module, pins in template.modules.items():
         dx, dy = shifts.get(module, (0, 0))
         for target, ox, oy in ((result.board_only, 0, 0), (result.pins, dx, dy)):
             pts = np.float32([[p["x"] + ox, p["y"] + oy] for p in pins]).reshape(-1, 1, 2)
             target[module] = [tuple(map(float, q)) for q in cv2.perspectiveTransform(pts, to_frame).reshape(-1, 2)]
     return result
+
+
+def _zncc(a: np.ndarray, b: np.ndarray) -> float:
+    """Zero-mean normalised cross-correlation, averaged over the channels (CIELAB: brightness and colour)."""
+    a = a.reshape(-1, a.shape[-1] if a.ndim == 3 else 1).astype(np.float64)
+    b = b.reshape(-1, b.shape[-1] if b.ndim == 3 else 1).astype(np.float64)
+    a, b = a - a.mean(0), b - b.mean(0)
+    return float(np.mean((a * b).sum(0) / (np.sqrt((a * a).sum(0) * (b * b).sum(0)) + 1e-9)))
+
+
+def _check_blocks(template: Template, rgb: Optional[np.ndarray], to_frame: np.ndarray,
+                  shifts: Dict[str, Tuple[int, int]]) -> Dict[str, str]:
+    """Does each placed block look like its own block in the reference photo? A wrong match can put the whole board
+    one block off (identical blocks, a far or partly hidden board): then the frame at Reader 1's place looks like
+    Reader 2 of the reference (another housing colour), or like nothing. Such modules are returned with the reason;
+    the reader reports them as not found instead of reading the wrong pins (bench, 31 Oct)."""
+    from .colour import srgb_to_lab
+    th, tw = template.gray.shape[:2]
+    if rgb is None:
+        return {}
+    view = cv2.warpPerspective(rgb, np.linalg.inv(to_frame), (tw, th), flags=cv2.INTER_AREA)
+    if template.lab is None:
+        template.lab = srgb_to_lab(template.rgb.astype(np.float64)).astype(np.float32)
+    left, top, right, bottom = template.block_margin
+    boxes = {}
+    for m, pins in template.modules.items():
+        xs, ys = [p["x"] for p in pins], [p["y"] for p in pins]
+        boxes[m] = (max(0, int(min(xs)) - left), max(0, int(min(ys)) - top),
+                    min(tw, int(max(xs)) + right), min(th, int(max(ys)) + bottom))
+    doubtful = {}
+    for m, (x0, y0, x1, y1) in boxes.items():
+        dx, dy = shifts.get(m, (0, 0))
+        X0, Y0, X1, Y1 = x0 + dx, y0 + dy, x1 + dx, y1 + dy
+        if X0 < 0 or Y0 < 0 or X1 > tw or Y1 > th:
+            continue
+        here = srgb_to_lab(view[Y0:Y1, X0:X1].astype(np.float64))
+        own = _zncc(here, template.lab[y0:y1, x0:x1])
+        if own < AGREE_MIN:
+            doubtful[m] = f"looks unlike its reference block (agreement {own:.2f})"
+            continue
+        for o, (ox0, oy0, _, _) in boxes.items():       # blocks with as many pins could be mistaken for each other
+            ref = template.lab[oy0:oy0 + (y1 - y0), ox0:ox0 + (x1 - x0)]
+            if o != m and len(template.modules[o]) == len(template.modules[m]) and ref.shape == here.shape:
+                other = _zncc(here, ref)
+                if other > own:
+                    doubtful[m] = f"looks more like {o} ({other:.2f}) than itself ({own:.2f})"
+                    break
+    return doubtful
 
 
 def _pairs_orb(template: Template, gray: np.ndarray):

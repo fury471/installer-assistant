@@ -32,3 +32,11 @@ def test_a_failing_save_does_not_break_the_read(tmp_path, monkeypatch):
 def test_off_by_default(monkeypatch):
     monkeypatch.delenv("IA_SAVE_FRAMES", raising=False)
     assert FrameLog.from_environment() is None
+
+
+def test_survey_counts_only_sure_wires():
+    from ml.perception_service.schemas import ReadItem
+    sure, unsure = ReadItem(colour=2, confidence=0.95, found=True), ReadItem(colour=2, confidence=0.6, found=True)
+    assert service.sure_or_empty(sure).colour == 2
+    out = service.sure_or_empty(unsure)
+    assert out.colour == -1 and abs(out.confidence - 0.4) < 1e-6 and out.found

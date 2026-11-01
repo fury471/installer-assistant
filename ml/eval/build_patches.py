@@ -18,7 +18,7 @@ import cv2
 from ml.perception_service.locate import Template, locate
 from ml.perception_service.patches import pin_patches, rectify
 
-MARGIN = 6           # extra template pixels around each window, for augmentation in train_pins.py
+MARGIN = 6           # extra canonical pixels around each window, for augmentation in train_pins.py
 
 
 def main():

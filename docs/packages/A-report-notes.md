@@ -181,6 +181,44 @@ with their numbers in its README): pipeline, locate_cdf, ablation, confusion, co
 importance. One fact first seen there: the homography alone puts only 13.9 % of board pins within half a spacing
 (parallax); refining each block brings it to 98.2 %.
 
+## 3c. One wire reader for every device (after the bench test, 31 Oct)
+
+**What happened.** At the bench the app ran live on an AXIS A1601 instead of the A1610: other silkscreen, a sticker, an
+extra red block. Empty pins and empty modules were read as wires, and once the pins were placed one block off. A
+stand-in test on session 1 showed why: trained on the blue blocks and tested on the green ones, the first reader called
+614 of 616 empty pins a wire. It had learned the device's background as much as the wires, which is dataset bias
+(`torralba2011`).
+
+**Design: device knowledge as data, the wire reader general.** Which hole is which pin can only come from the device
+(its manual), so each device keeps a template: a reference photo with every pin empty, the pin positions, the pin
+spacing and the direction the wires leave. Is there a wire, and which colour, is learned once for all devices:
+- every pin window is cut in one canonical shape (wire leaving to the right, one pin spacing = 24 px);
+- wire or not from how the window differs from the same window of the empty reference: change detection (`radke2005`)
+  with the light matched to the reference, edges, a few pixels of misalignment tolerated, and the shape of the change;
+- the colour from a second model on wired windows: the colour grid and the light-matched colour of the changed pixels;
+- tested by holding a domain out (`gulrajani2021`): an unseen background (blue -> green blocks) and an unseen device
+  (board -> reader).
+
+| Test (session 1, rows held out) | Pins right | False wires | Missed wires |
+| --- | --- | --- | --- |
+| Board, rows not trained on | 97.3 % (first reader 98.7 %) | 8 / 1092 (0) | 15 / 252 (13) |
+| Unseen background (trained blue, tested green) | 96.7 % (first reader 7.6 %) | 0 / 616 (614) | 15 / 56 |
+| Unseen device (trained board, tested reader) | 62.5 % | - | 3 / 88 |
+
+Wire-or-not carries over to a new background and a new device; colour across devices is weaker (63 % on the reader
+never seen), so there the calibrated confidence sends the installer to confirm. The price is about 1.4 points on the
+board it was trained on.
+
+**Other fixes from the bench.**
+- Zone survey: a wire on another module counts only at confidence >= 0.8; empty modules "holding a wire" 1/160 -> 0/160,
+  wired modules missed 0/64 -> 1/64.
+- Block check: a module whose placed block looks more like another block of the reference (colour ZNCC; correct >= 0.19,
+  one block off <= 0.15 on session 1) is reported as not found; 56/56 simulated one-block slips caught, 0/56 false alarms.
+- The app's floating window shows the frame that was read; the AR camera (AR Foundation, ARCore) anchors marks in the
+  world so they stay on the pins (to be tested on the phone).
+- Lesson for the method: live frames must be saved at every bench session (`IA_SAVE_FRAMES`); the 31 Oct issues could
+  only be studied from screenshots.
+
 ## 4. Open (to fill in later)
 
 - [ ] Session 2: final numbers for all tables above (`eval_locate --session session2`, both ends).

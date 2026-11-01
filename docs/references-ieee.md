@@ -184,3 +184,9 @@ Only details that were checked are given; where a page range or DOI could not be
 [60] C. Shorten and T. M. Khoshgoftaar, "A survey on image data augmentation for deep learning," *Journal of Big Data*, vol. 6, art. 60, 2019, doi: 10.1186/s40537-019-0197-0.  
 <sub>key `shorten2019`</sub>
 
+[61] R. J. Radke, S. Andra, O. Al-Kofahi, and B. Roysam, "Image change detection algorithms: a systematic survey," *IEEE Transactions on Image Processing*, vol. 14, no. 3, pp. 294–307, 2005, doi: 10.1109/TIP.2004.838698.  
+<sub>key `radke2005`</sub>
+
+[62] I. Gulrajani and D. Lopez-Paz, "In search of lost domain generalization," in *Proc. Int. Conf. Learning Representations (ICLR)*, 2021.  
+<sub>key `gulrajani2021`</sub>
+
