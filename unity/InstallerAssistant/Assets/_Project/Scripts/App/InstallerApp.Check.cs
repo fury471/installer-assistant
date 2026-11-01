@@ -407,7 +407,8 @@ namespace InstallerAssistant.App
         IEnumerator ConfirmWires(string saveLabel)
         {
             Sheet("Reading the wires", "This is " + CableTitle + ", " + EndWord(atController ? CableEnd.Controller : CableEnd.Device) +
-                " end. Hold the phone still for a moment.");
+                " end. Hold the phone in front of the " + (atController ? "block" : "terminals") +
+                ", 30 to 45 cm away, so you see the holes where the wires go in. Keep it still for a moment.");
             var bar = ProgressLine(ReadingWhat());
             yield return ReadWires(bar);
 
@@ -581,7 +582,7 @@ namespace InstallerAssistant.App
             {
                 // nothing read: the camera was not on the terminals, or the reader failed
                 Sheet("No wires found", "Point the camera at the " + (atController ? rule.Connector.Name + " block" : DeviceWord + "'s terminals") +
-                    " so they fill the middle of the screen, then read again.");
+                    " from the front, so you see the holes where the wires go in, then read again.");
                 Btn(sheetButtons, "Read again", ButtonKind.Primary, () => clicked = "rescan");
                 Instruction("No wires found", Warn);
                 return;

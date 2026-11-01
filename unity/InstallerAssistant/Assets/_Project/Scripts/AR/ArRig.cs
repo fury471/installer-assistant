@@ -30,7 +30,8 @@ namespace InstallerAssistant.AR
     ///          raycast is tried again every frame for 10 s, as ARCore finds the surface.
     /// Position every frame the world point projected with the camera of now: marks stay on the pins while the
     ///          phone moves.
-    /// If the marks appear mirrored on a phone, ArCameraView's arFlipImageX / arFlipImageY turn the image axis.
+    /// Image y is turned to the texture's bottom-up v (checked on the K80S, 1 Nov). If the marks appear mirrored on
+    /// another phone, ArCameraView's arFlipImageX / arFlipImageY turn an image axis.
     /// </summary>
     public sealed class ArRig
     {
@@ -295,8 +296,10 @@ namespace InstallerAssistant.AR
         /// </summary>
         Ray RayOf(ImagePoint p, FrameView v)
         {
+            // the texture's v runs bottom-up while image y runs top-down: 1 - y (bench, 1 Nov: without it the marks
+            // were mirrored across the portrait screen); the two flags undo either axis if a phone differs
             float tx = owner.arFlipImageX ? 1f - p.X : p.X;
-            float ty = owner.arFlipImageY ? 1f - p.Y : p.Y;
+            float ty = owner.arFlipImageY ? p.Y : 1f - p.Y;
             var m = v.Display;
             float a = m.m00, b = m.m10, c = m.m01, d = m.m11;     // tx = a vx + b vy + m20, ty = c vx + d vy + m21
             float det = a * d - b * c;

@@ -18,7 +18,7 @@ import numpy as np
 from ..colour import classify_patch, grey_world
 from ..locate import Template, locate as find_pins
 from ..patches import pin_patches, reference_patches
-from ..pin_reader import SLACK, PinReader
+from ..pin_reader import SLACK, PinReader, compare
 from ..schemas import CompareRequest, ModuleItems, ReadItem, ReadRequest
 from ..tracing import trace_items
 
@@ -75,8 +75,10 @@ class ClassicalReader:
         if self.pin_reader is not None and all(p is not None for p in positions):
             tpl = self.templates[device]
             if self._patches is None or self._patches[0] is not image or self._patches[1] != device:
-                self._patches = (image, device, pin_patches(tpl, self._last[2], image))
-            reads = self.pin_reader.read(self._patches[2][module], reference_patches(tpl, SLACK)[module])
+                windows = pin_patches(tpl, self._last[2], image)
+                self._patches = (image, device, windows, closest_variant(tpl, windows))
+            refs = reference_patches(self._patches[3], SLACK)[module]
+            reads = self.pin_reader.read(self._patches[2][module], refs)
             return [ReadItem(colour=c, confidence=conf, x=x, y=y, found=True)
                     for (c, conf), (x, y) in zip(reads, positions)]
         return self._read_module_baseline(positions, image)
@@ -100,3 +102,19 @@ class ClassicalReader:
     def compare(self, req: CompareRequest, device: Optional[np.ndarray], controller: Optional[np.ndarray]) -> List[str]:
         # The second opinion is a separate model (a VLM call), not this reader: see the plan doc.
         return ["unknown"] * req.pin_count
+
+
+def closest_variant(tpl: Template, windows) -> Template:
+    """The board variant whose empty pins look most like this frame's pins (most pins are empty): the median, over
+    every pin of every module, of the median colour difference to that variant's empty window. Chosen apart from
+    locate(), which may fit the board with another variant's photo (bench, 1 Nov: an A1601 frame matched with the
+    A1610 photo read all eight empty pins as wires)."""
+    if not tpl.variants:
+        return tpl
+    best, best_score = tpl, float("inf")
+    for t in [tpl] + tpl.variants:
+        refs = reference_patches(t, SLACK)
+        score = float(np.median([np.median(compare(w, r)[0]) for m, ws in windows.items() for w, r in zip(ws, refs[m])]))
+        if score < best_score:
+            best, best_score = t, score
+    return best

@@ -55,7 +55,7 @@ namespace InstallerAssistant.AR
         public int arMaxImageWidth = 1920;
         [Tooltip("Turn on if, on the phone, the marks land mirrored left to right (left pins marked on the right).")]
         public bool arFlipImageX = false;
-        [Tooltip("Turn on if, on the phone, the marks land mirrored top to bottom (top pins marked at the bottom).")]
+        [Tooltip("Turn on if, on the phone, the marks land mirrored (pins near the screen edge marked near the opposite edge). Off is right for the Redmi K80S.")]
         public bool arFlipImageY = false;
 
         ArRig ar;

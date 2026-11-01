@@ -58,18 +58,32 @@ class Template:
     block_margin: Tuple[int, int, int, int] = BLOCK_MARGIN   # stage 2: box around each module's pins
     min_inliers: int = MIN_INLIERS          # fewer agreeing pairs: "not found"; a template can ask for more
     lab: Optional[np.ndarray] = None        # CIELAB of rgb, computed on first use (block check)
+    variant: str = ""                       # "" = the template's own photo; else a board variant (see load)
+    variants: List["Template"] = field(default_factory=list)   # other revisions of the device, same pin layout
 
     @staticmethod
     def load(name: str) -> "Template":
+        """The template, with its board variants: other revisions of the device with the same pin layout (e.g. the
+        AXIS A1601 for the A1610), each a photo of the empty board in this template's pixel frame ("variants" in the
+        JSON: {"A1601": "A1610_A1601.jpg"}; made by ml/tools/make_variant.py). locate() uses the one that fits."""
         meta = json.loads((TEMPLATES / (name + ".json")).read_text(encoding="utf-8"))
-        bgr = cv2.imread(str(TEMPLATES / meta["image"]))
-        if bgr is None:
-            raise FileNotFoundError(TEMPLATES / meta["image"])
-        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-        kp, des = cv2.ORB_create(nfeatures=4000).detectAndCompute(gray, None)
-        return Template(name, gray, meta["modules"], kp, des, cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB),
-                        meta.get("matcher", "orb"), tuple(meta.get("block_margin", BLOCK_MARGIN)),
-                        int(meta.get("min_inliers", MIN_INLIERS)))
+
+        def one(image: str, variant: str) -> "Template":
+            bgr = cv2.imread(str(TEMPLATES / image))
+            if bgr is None:
+                raise FileNotFoundError(TEMPLATES / image)
+            gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+            kp, des = cv2.ORB_create(nfeatures=4000).detectAndCompute(gray, None)
+            return Template(name, gray, meta["modules"], kp, des, cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB),
+                            meta.get("matcher", "orb"), tuple(meta.get("block_margin", BLOCK_MARGIN)),
+                            int(meta.get("min_inliers", MIN_INLIERS)), variant=variant)
+
+        base = one(meta["image"], "")
+        base.variants = [one(image, v) for v, image in meta.get("variants", {}).items()]
+        return base
+
+    def variant_named(self, variant: str) -> "Template":
+        return next((t for t in [self] + self.variants if t.variant == variant), self)
 
 
 @dataclass
@@ -81,12 +95,28 @@ class Located:
     homography: Optional[np.ndarray] = None            # template -> frame (frame pixels)
     shifts: Dict[str, Tuple[int, int]] = field(default_factory=dict)   # stage 2: block offsets (template pixels)
     doubtful: Dict[str, str] = field(default_factory=dict)  # modules placed where they do not look right -> why
+    variant: str = ""                                  # which board variant fitted ("" = the template's own photo)
+    agreement: float = -1.0                            # mean colour agreement of the placed blocks with that photo
     matches: list = field(default_factory=list)        # (template point, frame point, inlier?) for drawing
 
 
 def locate(template: Template, image: np.ndarray, refine_blocks: bool = True) -> Located:
     """Where the template's pins are in this frame: grey (H x W) or RGB (H x W x 3), any size.
-    found = False when the device is not in view."""
+    found = False when the device is not in view. With board variants, each is tried and the one with the most
+    blocks agree best in colour with its photo is used (its photo then also serves the block check and the wire reader).
+    Agreement, not the number of feature pairs: on 1 Nov the A1610 photo got a few more pairs on an A1601 frame and
+    all eight empty pins were read as wires."""
+    best = None
+    for t in [template] + template.variants:
+        r = _locate_one(t, image, refine_blocks)
+        r.variant = t.variant
+        key = (r.found, r.agreement if r.found else 0.0, r.inliers)
+        if best is None or key > best[0]:
+            best = (key, r)
+    return best[1]
+
+
+def _locate_one(template: Template, image: np.ndarray, refine_blocks: bool) -> Located:
     h, w = image.shape[:2]
     s = min(1.0, WORK_SIDE / max(h, w))
     small = cv2.resize(image, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA) if s < 1 else image
@@ -113,7 +143,7 @@ def locate(template: Template, image: np.ndarray, refine_blocks: bool = True) ->
     result = Located(True, inliers, homography=to_frame, shifts=shifts,
                      matches=[(tuple(a), tuple(b / s), bool(k)) for a, b, k in zip(src, dst, mask.ravel())])
     if len(template.modules) > 1:
-        result.doubtful = _check_blocks(template, image if image.ndim == 3 else None, to_frame, shifts)
+        result.doubtful, result.agreement = _check_blocks(template, image if image.ndim == 3 else None, to_frame, shifts)
     for module, pins in template.modules.items():
         dx, dy = shifts.get(module, (0, 0))
         for target, ox, oy in ((result.board_only, 0, 0), (result.pins, dx, dy)):
@@ -131,15 +161,16 @@ def _zncc(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def _check_blocks(template: Template, rgb: Optional[np.ndarray], to_frame: np.ndarray,
-                  shifts: Dict[str, Tuple[int, int]]) -> Dict[str, str]:
+                  shifts: Dict[str, Tuple[int, int]]) -> Tuple[Dict[str, str], float]:
     """Does each placed block look like its own block in the reference photo? A wrong match can put the whole board
     one block off (identical blocks, a far or partly hidden board): then the frame at Reader 1's place looks like
     Reader 2 of the reference (another housing colour), or like nothing. Such modules are returned with the reason;
-    the reader reports them as not found instead of reading the wrong pins (bench, 31 Oct)."""
+    the reader reports them as not found instead of reading the wrong pins (bench, 31 Oct). Also returns the mean
+    agreement of the blocks with their own reference blocks (used to choose the board variant)."""
     from .colour import srgb_to_lab
     th, tw = template.gray.shape[:2]
     if rgb is None:
-        return {}
+        return {}, -1.0
     view = cv2.warpPerspective(rgb, np.linalg.inv(to_frame), (tw, th), flags=cv2.INTER_AREA)
     if template.lab is None:
         template.lab = srgb_to_lab(template.rgb.astype(np.float64)).astype(np.float32)
@@ -149,7 +180,7 @@ def _check_blocks(template: Template, rgb: Optional[np.ndarray], to_frame: np.nd
         xs, ys = [p["x"] for p in pins], [p["y"] for p in pins]
         boxes[m] = (max(0, int(min(xs)) - left), max(0, int(min(ys)) - top),
                     min(tw, int(max(xs)) + right), min(th, int(max(ys)) + bottom))
-    doubtful = {}
+    doubtful, agreements = {}, []
     for m, (x0, y0, x1, y1) in boxes.items():
         dx, dy = shifts.get(m, (0, 0))
         X0, Y0, X1, Y1 = x0 + dx, y0 + dy, x1 + dx, y1 + dy
@@ -157,6 +188,7 @@ def _check_blocks(template: Template, rgb: Optional[np.ndarray], to_frame: np.nd
             continue
         here = srgb_to_lab(view[Y0:Y1, X0:X1].astype(np.float64))
         own = _zncc(here, template.lab[y0:y1, x0:x1])
+        agreements.append(own)
         if own < AGREE_MIN:
             doubtful[m] = f"looks unlike its reference block (agreement {own:.2f})"
             continue
@@ -167,7 +199,7 @@ def _check_blocks(template: Template, rgb: Optional[np.ndarray], to_frame: np.nd
                 if other > own:
                     doubtful[m] = f"looks more like {o} ({other:.2f}) than itself ({own:.2f})"
                     break
-    return doubtful
+    return doubtful, float(np.mean(agreements)) if agreements else -1.0
 
 
 def _pairs_orb(template: Template, gray: np.ndarray):

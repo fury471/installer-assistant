@@ -1,5 +1,5 @@
 {
-  "image": "A1610.jpg", "width": 1200, "height": 1600, "pin_spacing": 24, "wire_direction": "right",
+  "image": "A1610.jpg", "variants": {"A1601": "A1610_A1601.jpg"}, "width": 1200, "height": 1600, "pin_spacing": 24, "wire_direction": "right",
   "modules": {
     "A1610.READER1": [
       {"name": "\u2212", "x": 164, "y": 1148},

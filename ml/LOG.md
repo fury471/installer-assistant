@@ -225,3 +225,24 @@
   marks if the display-matrix convention differs on the K80S.
 - Speed (slow test machine): controller read 1.1-1.4 s, reader 3.6-4.1 s with the new reader and checks.
 
+## 2026-11-01 · First live test with the AR camera (K80S, AXIS A1601), 68 frames saved (data/live/1101)
+- Service on port 5055 (Windows reserves 7979-8078 here), adb reverse tcp:8000 tcp:5055; app installed by adb push +
+  the phone's file manager (Xiaoxin's phone blocks "Install via USB"). Frames: 1920 x 1080, landscape sensor image.
+- Service time on the laptop: median 451 ms, 95th percentile 772 ms per controller read.
+- AR marks were mirrored across the portrait screen; the service's positions in the frames were right. Cause: image y
+  runs top-down, the camera texture's v bottom-up. ArRig now uses 1 - y (flags still flip either axis).
+- The board was an A1601 again. With only the A1610 reference, empty pins read as wires and blocks were rejected.
+  New: board variants (Template.variants, ml/tools/make_variant.py): the A1601 picture = per-pixel median of 8 frames of
+  the empty board warped into the A1610 template's view, blocks moved back by their stage-2 offsets (stage 2 put the
+  pins exactly on the openings: checked with names drawn). locate() picks the variant whose blocks agree best in
+  colour; the wire reader compares with the variant whose empty pin windows look most like the frame's
+  (classical.closest_variant), because the best-fitting photo for finding the board is not always the best empty board.
+- Replay of all 68 frames: board not found in 14 (close-ups with part of the board, the floor); Reader 1 rejected by the
+  block check in 6 (steep views from above: pins would land on the block tops - right to reject). Empty board,
+  21 frames: 0 false wires on 168 pins (optimistic: 8 of these frames built the A1601 picture). Wired, 7 frames with
+  known wiring (- green, 12V black, A yellow): 45 / 56 pins right (80 %); the A1601 picture alone would give 17 / 56
+  in that warmer light, so the choice of reference matters. Misses: black missed, the orange-ish yellow read red.
+- DISK + LightGlue as fallback for close-ups: still not found (5-8 pairs); not used.
+- App text now asks to hold the phone in front of the block, 30-45 cm, so the holes where the wires go in are seen.
+- Next: label live frames (one saved folder per wiring) and train with them; the model has only seen session-1 stills.
+
