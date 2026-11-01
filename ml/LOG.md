@@ -176,3 +176,52 @@
 - Dry run with two session-1 photos through send_frame.py: both saved, every pin found, 0.66 s (board) and 3.4 s
   (reader) on the slow test machine.
 
+## 2026-11-01 · Bench test 31 Oct (with Xiaoxin) and the fixes
+- The bench had an AXIS A1601 (not the A1610 of session 1): other silkscreen ("B / O2" for "LED2/O2", "IO8" for
+  "BUZZER/IO8"), an "Access Control Levels" sticker, a red IO13/IO14 block. Live frames were not saved (the service ran
+  without IA_SAVE_FRAMES), so the issues below come from 9 screenshots.
+- Issues: empty pins read as wires (issues 2, 5, 6) and empty modules surveyed as "1 wire" -> "Is this cable on
+  Door 1?" (1, 3, 4); one frame placed Reader 1's pins on Reader 2 (6); black read as green and unstable reads at the
+  reader end (8, 9); the floating window's dots off the slots (7); marks stuck to the screen, not the pins.
+- Cause of 1-6, measured: the pin reader had learned the A1610's background. Stand-in test on session 1 (train on the
+  blue blocks, test on the green ones): the shipped reader called 614 of 616 empty green pins a wire.
+- Fix 1, one general wire reader for every device (pin_reader.py, patches.py, train_pins.py):
+  - every pin window is cut in one canonical shape: turned so the wire leaves to the right, scaled so one pin spacing
+    is 24 px (template JSON: "pin_spacing", "wire_direction"); the board's windows are unchanged by this;
+  - wire or not from how the window DIFFERS from the same window of the empty reference photo (colour difference after
+    matching brightness/colour cast, edge difference, both tolerant to 3 px of misalignment, shape of the change;
+    change detection, Radke et al. 2005); trained with the shifted/turned copies;
+  - colour from a second model on wired windows only: the 20 x 7 CIELAB grid with brightness features + the colour of
+    the changed pixels along the wire's path after von Kries light matching to the reference;
+  - a wire of uncertain colour stays a wire: "wire or not" is decided on the raw presence probability, temperature
+    scaling only sets the confidence.
+  Session 1, row-wise cross-validated (Linux, scikit-learn 1.7.2; ml/runs/train_pins.json):
+
+  | Test | Pins right | False wires | Missed wires | Colour on wired pins |
+  | --- | --- | --- | --- | --- |
+  | Board, rows not trained on | 97.3 % (was 98.7 %) | 8 / 1092 (was 0) | 15 / 252 (was 13) | 88.9 % (was 92.9 %) |
+  | Reader, rows not trained on | 77.3 % (was 80.7 %) | - | 0 / 88 | 77.3 % |
+  | Unseen background: trained on blue blocks, tested on green | 96.7 % (was 7.6 %) | **0 / 616 (was 614)** | 15 / 56 | 60.7 % |
+  | Unseen device: trained on the board, tested on the reader | 62.5 % | - | **3 / 88** | 62.5 % |
+
+  The price: about 1.4 points on the board it was trained on. The gain: a new background or device no longer looks
+  like wires. Wire-or-not carries over to a new device; colour across devices is weaker (63 %), so there the app's
+  "unsure -> ask" step matters and data from more devices helps. Confidence: ECE 0.05 -> 0.01 (T = 0.54).
+  Experiments that led here (all on session 1): reference-only presence + reference-only colour (colour 43 % on unseen
+  background) -> grid colour on wired windows only (79-82 %) -> + edge difference and augmentation for presence (fewer
+  missed) -> wire-pixel colour after light matching (alone 55 % board -> reader, kept as extra features).
+- Fix 2, zone survey: a surveyed wire counts only when the reader is >= 0.8 sure (app.py SURVEY_SURE, the app's amber
+  line). Session 1 cross-validated, module level: empty modules "holding a wire" 1/160 -> 0/160; modules with wires
+  missed 0/64 -> 1/64.
+- Fix 3, block check (locate.py _check_blocks): each placed block is compared in colour (CIELAB ZNCC) with its own
+  reference block and with the reference blocks that have as many pins; if it looks more like another one (blue
+  Reader 1 vs green Reader 2) or barely like itself (< 0.10), that module is "not found" instead of read on the wrong
+  pins. Session 1: correct placements score >= 0.19, one block off <= 0.15; 0 / 56 correct placements flagged, 56 / 56
+  simulated one-block slips caught.
+- Fix 4 (app): the floating window's still is now the frame that was read (TakeSnapshot), not the camera 1-3 s later.
+- Fix 5 (app, AR): ArRig.cs builds AR Foundation 6.5 at run time on the phone (ArCameraView.arCamera, on by default):
+  ARCore camera at up to 1920 px with auto-focus, world anchors from raycasts against planes / feature points, marks
+  projected every frame so they stay on the pins. Untested on a phone yet; arFlipImageX / arFlipImageY fix mirrored
+  marks if the display-matrix convention differs on the K80S.
+- Speed (slow test machine): controller read 1.1-1.4 s, reader 3.6-4.1 s with the new reader and checks.
+

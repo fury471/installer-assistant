@@ -56,7 +56,11 @@ def main():
     out = os.path.join("ml", "runs", "inspect_" + a.template)
     os.makedirs(out, exist_ok=True)
 
-    bundle = joblib.load(MODELS / f"pins_{a.template}.joblib")
+    path = MODELS / f"pins_{a.template}.joblib"
+    if not path.exists():
+        raise SystemExit("inspect_pins.py describes the first, per-device pin reader (pins_<template>.joblib, before "
+                         "1 Nov 2026). The general reader's numbers are in ml/runs/train_pins.json (train_pins.py).")
+    bundle = joblib.load(path)
     model, T = bundle["model"], bundle["temperature"]
     w, h = FEATURE_SIZE[a.template]
     depths = [e.get_depth() for e in model.estimators_]

@@ -3,10 +3,12 @@
   1. locate.py: the template's pins mapped into the frame (ORB or LightGlue features + MAGSAC++ homography; on the
      board each terminal block found again by normalised cross-correlation). Once per frame and device: the zone
      survey asks about the other modules of the same frame and gets the same result.
-  2. patches.py: the frame warped into the template's view; a fixed window per pin where its wire leaves.
-  3. pin_reader.py: a trained classifier says no wire / red / black / green / yellow, with a temperature-scaled
-     confidence (ml/eval/train_pins.py). If no trained model is in ml/models/, the old baseline (grey-world white
-     balance, nearest CIELAB reference colour at the pin; colour.py) is used instead and a warning is printed.
+  2. patches.py: the frame warped into the template's view; a window per pin where its wire leaves, in the same
+     canonical shape for every device, and the same window from the device's empty reference photo.
+  3. pin_reader.py: one general reader for every device says no wire / red / black / green / yellow, with a
+     temperature-scaled confidence (ml/eval/train_pins.py): wire or not from how the window differs from the empty
+     reference, the colour from the wire's own pixels. If ml/models/pins.joblib is missing, the old baseline
+     (grey-world white balance, nearest CIELAB reference colour at the pin; colour.py) is used and a warning printed.
   4. Bundle check: tracing.py follows each wire back to the scanned label: "this_cable", "other_cable" or "unknown".
 """
 from typing import List, Optional
@@ -15,24 +17,23 @@ import numpy as np
 
 from ..colour import classify_patch, grey_world
 from ..locate import Template, locate as find_pins
-from ..patches import pin_patches
-from ..pin_reader import PinReader
+from ..patches import pin_patches, reference_patches
+from ..pin_reader import SLACK, PinReader
 from ..schemas import CompareRequest, ModuleItems, ReadItem, ReadRequest
 from ..tracing import trace_items
 
 
 class ClassicalReader:
-    name = "classical-2"
+    name = "classical-3"
 
     def __init__(self):
         self.templates = {"A1610": Template.load("A1610"), "A4020E": Template.load("A4020E")}
         self._last = None              # (frame, device, result): search once per frame, not once per module
         self._patches = None           # (frame, device, {module: patches}): cut once per frame as well
-        self.pin_readers = {t: PinReader(t) for t in self.templates if PinReader.available(t)}
-        missing = [t for t in self.templates if t not in self.pin_readers]
-        if missing:
-            print("No trained pin reader for %s (python -m ml.eval.train_pins): using the colour baseline there."
-                  % ", ".join(missing))
+        self.pin_reader = PinReader() if PinReader.available() else None
+        if self.pin_reader is None:
+            print("No trained wire reader (ml/models/pins.joblib; python -m ml.eval.train_pins): "
+                  "using the colour baseline.")
 
     def locate(self, module: str, terminals: List[str], image: np.ndarray) -> List[Optional[tuple]]:
         device = module.split(".")[0]                  # "A1610.READER1" -> "A1610"; "A4020E" -> "A4020E"
@@ -44,6 +45,9 @@ class ClassicalReader:
             self._last = (image, device, res)
         res = self._last[2]
         if not res.found:
+            return [None] * len(terminals)
+        if module in res.doubtful:                     # placed, but it does not look like this module: say so
+            print("%s not trusted: %s" % (module, res.doubtful[module]))
             return [None] * len(terminals)
         if len(res.pins[module]) != len(terminals):
             return [None] * len(terminals)
@@ -68,10 +72,11 @@ class ClassicalReader:
     def _read_module(self, module: str, terminals: List[str], image: np.ndarray) -> List[ReadItem]:
         positions = self.locate(module, terminals, image)
         device = module.split(".")[0]
-        if device in self.pin_readers and all(p is not None for p in positions):
+        if self.pin_reader is not None and all(p is not None for p in positions):
+            tpl = self.templates[device]
             if self._patches is None or self._patches[0] is not image or self._patches[1] != device:
-                self._patches = (image, device, pin_patches(self.templates[device], self._last[2], image))
-            reads = self.pin_readers[device].read(self._patches[2][module])
+                self._patches = (image, device, pin_patches(tpl, self._last[2], image))
+            reads = self.pin_reader.read(self._patches[2][module], reference_patches(tpl, SLACK)[module])
             return [ReadItem(colour=c, confidence=conf, x=x, y=y, found=True)
                     for (c, conf), (x, y) in zip(reads, positions)]
         return self._read_module_baseline(positions, image)

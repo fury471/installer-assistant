@@ -511,13 +511,35 @@ namespace InstallerAssistant.App
                 if (where[i].Valid) view.Anchor(CameraKeys.Of(end, i), where[i], frame);
         }
 
-        /// <summary>Keeps a still of this end with its positions and the frame it was read from (for the other end and the report).</summary>
+        /// <summary>
+        /// Keeps a still of this end with its positions and the frame it was read from (for the other end and the report).
+        /// The still is the frame that was read, so the dots sit on the pins the reader found even when the phone moved
+        /// during the 1-3 s the reading took (bench, 31 Oct); the view's own picture is only the fallback.
+        /// </summary>
         void TakeSnapshot(CableEnd end, ImagePoint[] where, CameraFrame frame)
         {
             var shot = view.Snapshot(end, where ?? new ImagePoint[0]);
+            var still = FrameTexture(frame);
+            if (still != null)
+            {
+                if (shot.Image != null) Destroy(shot.Image);
+                still.name = "snapshot-" + (end == CableEnd.Device ? "device" : "controller");
+                shot.Image = still;
+            }
             if (current == null) return;
             if (end == CableEnd.Device) { current.DeviceShot = shot; current.DeviceFrame = frame; }
             else { current.ControllerShot = shot; current.ControllerFrame = frame; }
+        }
+
+        /// <summary>The frame's own pixels as a texture (RGBA32, Unity's bottom-up rows), or null if it has none.</summary>
+        static Texture2D FrameTexture(CameraFrame f)
+        {
+            if (f == null || f.Format != FramePixels.Rgba32 || f.Pixels == null || f.Width <= 0 || f.Height <= 0 ||
+                f.Pixels.Length != f.Width * f.Height * 4) return null;
+            var tex = new Texture2D(f.Width, f.Height, TextureFormat.RGBA32, false);
+            tex.LoadRawTextureData(f.Pixels);
+            tex.Apply(false);
+            return tex;
         }
 
         void SetReadMark(int i)

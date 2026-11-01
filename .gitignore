@@ -72,7 +72,7 @@ venv/
 ml/runs/
 ml/models/*
 # the pin readers are small (2-3 MB): shared through Git so the whole team runs the same model
-!ml/models/pins_*.joblib
+!ml/models/pins.joblib
 *.pt
 
 # ---- Operating system files -------------------------------------------

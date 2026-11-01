@@ -73,7 +73,7 @@ The service needs two kinds of model files in `ml/models/`:
 | File | What | How to get it |
 | --- | --- | --- |
 | `disk_lightglue_pipeline.onnx` | DISK + LightGlue, finds the A4020-E reader (`locate.py`) | `python ml/tools/get_models.py` |
-| `pins_A1610.joblib`, `pins_A4020E.joblib` | Pin reader: no wire / colour per pin (`pin_reader.py`) | **In Git** (small): comes with `git pull`. Retrained by package A with `python -m ml.eval.build_patches --session session1`, then `python -m ml.eval.train_pins --sessions session1` (needs the annotated photos) |
+| `pins.joblib` | The general wire reader: no wire / colour per pin, for every device (`pin_reader.py`): wire or not from how each pin window differs from the device's empty reference photo, the colour from the wire's pixels | **In Git** (small): comes with `git pull`. Retrained by package A with `python -m ml.eval.build_patches --session session1`, then `python -m ml.eval.train_pins --sessions session1` (needs the annotated photos). A new device needs no retraining: a template JSON (`pin_spacing`, `wire_direction`, pins) and a reference photo with every pin empty |
 
 The LightGlue model (50 MB) stays out of Git and is downloaded with its checksum checked. The pin readers are
 shared through Git so everyone debugs with the same model; they load only with the scikit-learn version pinned in
