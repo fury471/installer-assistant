@@ -76,11 +76,27 @@ def pin_patches(template: Template, located: Located, rgb: np.ndarray, view: np.
 _REFERENCES: Dict[tuple, Dict[str, List[np.ndarray]]] = {}
 
 
-def reference_patches(template: Template, margin: int) -> Dict[str, List[np.ndarray]]:
+def reference_patches(template: Template, margin: int, reference_index: int = 0) -> Dict[str, List[np.ndarray]]:
     """module -> the same windows cut from the template's photo (all pins empty), cached. Pass the board variant
     that locate() found (template.variant_named(located.variant)) so the windows come from the right revision."""
-    key = (template.name, template.variant, margin)
+    key = (template.name, template.variant, margin, reference_index)
     if key not in _REFERENCES:
+        if reference_index:
+            extra = template.wire_reference_margin - margin
+            if extra < 0:
+                raise ValueError("Requested margin exceeds the calibrated empty-reference margin")
+            result = {}
+            for module, views in template.wire_references.items():
+                packed = views[reference_index - 1]
+                count = len(template.modules[module])
+                height = packed.shape[0] // count
+                expected = (CANON_BOX[3] - CANON_BOX[1] + 2 * template.wire_reference_margin,
+                            CANON_BOX[2] - CANON_BOX[0] + 2 * template.wire_reference_margin)
+                if packed.shape[:2] != (count * expected[0], expected[1]):
+                    raise ValueError(f"{module}: invalid packed empty-reference dimensions")
+                result[module] = [window(packed[i * height:(i + 1) * height], extra) for i in range(count)]
+            _REFERENCES[key] = result
+            return result
         spacing, direction = geometry(template.name)
         _REFERENCES[key] = {m: [cut(template.rgb, p["x"], p["y"], spacing, direction, margin) for p in pins]
                             for m, pins in template.modules.items()}

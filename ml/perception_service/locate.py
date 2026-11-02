@@ -11,6 +11,12 @@ Two stages:
     and the column of blocks is found again by normalised cross-correlation (cv2.matchTemplate; Lewis, 1995). The
     whole column is matched first: pins repeat, so a single block could slip by one pin, but the column as a whole
     cannot. Each block is then fine-tuned a few pixels around the column's offset, and its pins move with it.
+    What that match cannot do is decide between two offsets a whole pin apart when the block is far, soft or empty:
+    on 2 Nov an empty block was placed one pin low that way. So a block whose colour no longer looks like its own
+    block in the reference photo is not read at all (Located.block_agreement, readers/classical.py: TRUST_MIN).
+    The A4020-E uses calibrated empty views of its rigid housing above the openings. Its old narrow strip around
+    the openings followed wires/highlights instead of the housing; a single old view also differed with angle.
+    These local references affect only placement, not the empty reference used by the wire/colour model.
 Stage 1 pairs features with one of two matchers, chosen per template ("matcher" in its JSON):
   "orb"        ORB + ratio test, fast; enough for the A1610 board, whose printed surface stays mostly visible.
   "lightglue"  learned DISK features (Tyszkiewicz et al., 2020) paired by LightGlue (Lindenberger et al., 2023),
@@ -18,6 +24,9 @@ Stage 1 pairs features with one of two matchers, chosen per template ("matcher" 
                the reader and its busy QR code draws ORB's attention, so ORB found it on 5 of 24 photos and
                LightGlue on 23 of 24, flash included. Slower (~0.7 s per frame on a laptop CPU), so only where needed.
                The model is not in Git: python ml/tools/get_models.py downloads it to ml/models/.
+The second matcher is tried when the first finds less than the template's min_inliers: which one wins depends on the
+photo (on 2 Nov the phone's A4020-E frames gave LightGlue 95 pairs but only 10 that agreed, and ORB 121 pairs with 80
+that agreed - "not found" against a good homography). Trying it costs nothing when the first matcher works.
 Nothing here knows the wiring: it only says where the pins are.
 """
 import json
@@ -27,6 +36,8 @@ from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
+
+from .colour import srgb_to_lab
 
 TEMPLATES = Path(__file__).resolve().parent / "templates"
 MODELS = Path(__file__).resolve().parents[1] / "models"          # ml/models, not in Git
@@ -55,11 +66,14 @@ class Template:
     descriptors: Optional[np.ndarray] = None
     rgb: Optional[np.ndarray] = None        # colour picture, for LightGlue
     matcher: str = "orb"                    # "orb" or "lightglue", from the template's JSON
-    block_margin: Tuple[int, int, int, int] = BLOCK_MARGIN   # stage 2: box around each module's pins
+    block_margin: Tuple[int, int, int, int] = BLOCK_MARGIN   # stage 2 box; negative bottom can exclude wires
     min_inliers: int = MIN_INLIERS          # fewer agreeing pairs: "not found"; a template can ask for more
     lab: Optional[np.ndarray] = None        # CIELAB of rgb, computed on first use (block check)
     variant: str = ""                       # "" = the template's own photo; else a board variant (see load)
     variants: List["Template"] = field(default_factory=list)   # other revisions of the device, same pin layout
+    block_references: Dict[str, List[np.ndarray]] = field(default_factory=dict)   # calibrated, wire-free local views
+    wire_references: Dict[str, List[np.ndarray]] = field(default_factory=dict)    # same views, packed empty pin windows
+    wire_reference_margin: int = 0
 
     @staticmethod
     def load(name: str) -> "Template":
@@ -74,9 +88,29 @@ class Template:
                 raise FileNotFoundError(TEMPLATES / image)
             gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
             kp, des = cv2.ORB_create(nfeatures=4000).detectAndCompute(gray, None)
-            return Template(name, gray, meta["modules"], kp, des, cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB),
-                            meta.get("matcher", "orb"), tuple(meta.get("block_margin", BLOCK_MARGIN)),
-                            int(meta.get("min_inliers", MIN_INLIERS)), variant=variant)
+            result = Template(name, gray, meta["modules"], kp, des, cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB),
+                              meta.get("matcher", "orb"), tuple(meta.get("block_margin", BLOCK_MARGIN)),
+                              int(meta.get("min_inliers", MIN_INLIERS)), variant=variant)
+            for module, images in meta.get("block_references", {}).items():
+                x0, y0, x1, y1 = _block_boxes(result)[module]
+                references = []
+                for image in images:
+                    patch = cv2.imread(str(TEMPLATES / image), cv2.IMREAD_GRAYSCALE)
+                    if patch is None or patch.shape != (y1 - y0, x1 - x0):
+                        raise ValueError(f"{image}: block reference must have shape {(y1 - y0, x1 - x0)}")
+                    references.append(patch)
+                result.block_references[module] = references
+            result.wire_reference_margin = int(meta.get("wire_reference_margin", 0))
+            for module, images in meta.get("wire_references", {}).items():
+                if len(images) != len(result.block_references.get(module, [])):
+                    raise ValueError(f"{module}: wire and housing reference views must correspond")
+                result.wire_references[module] = []
+                for image in images:
+                    packed = cv2.imread(str(TEMPLATES / image))
+                    if packed is None:
+                        raise FileNotFoundError(TEMPLATES / image)
+                    result.wire_references[module].append(cv2.cvtColor(packed, cv2.COLOR_BGR2RGB))
+            return result
 
         base = one(meta["image"], "")
         base.variants = [one(image, v) for v, image in meta.get("variants", {}).items()]
@@ -97,7 +131,9 @@ class Located:
     doubtful: Dict[str, str] = field(default_factory=dict)  # modules placed where they do not look right -> why
     variant: str = ""                                  # which board variant fitted ("" = the template's own photo)
     agreement: float = -1.0                            # mean colour agreement of the placed blocks with that photo
+    block_agreement: Dict[str, float] = field(default_factory=dict)  # per module: how much it looks like its own block
     matches: list = field(default_factory=list)        # (template point, frame point, inlier?) for drawing
+    reference_indices: Dict[str, int] = field(default_factory=dict)   # 0 = original; 1..N = matched housing view
 
 
 def locate(template: Template, image: np.ndarray, refine_blocks: bool = True) -> Located:
@@ -122,28 +158,42 @@ def _locate_one(template: Template, image: np.ndarray, refine_blocks: bool) -> L
     small = cv2.resize(image, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA) if s < 1 else image
     gray = small if small.ndim == 2 else cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
 
-    # stage 1: the whole device
-    if template.matcher == "lightglue":
-        rgb = small if small.ndim == 3 else cv2.cvtColor(small, cv2.COLOR_GRAY2RGB)
-        src, dst, px = _pairs_lightglue(template, rgb)
-    else:
-        src, dst = _pairs_orb(template, gray)
-        px = RANSAC_PX
-    if len(src) < template.min_inliers:
-        return Located(False, len(src))
-    small = gray
-    cv2.setRNGSeed(0)                                  # same frame, same answer
-    H, mask = cv2.findHomography(src, dst, RANSAC_METHOD, px)
-    inliers = int(mask.sum()) if mask is not None else 0
-    if H is None or inliers < template.min_inliers:
+    # stage 1: the whole device, with the template's matcher; the other one only if that finds too little
+    H = mask = None
+    inliers = 0
+    for matcher in [template.matcher] + [m for m in ("orb", "lightglue") if m != template.matcher]:
+        if matcher == "lightglue":
+            rgb = small if small.ndim == 3 else cv2.cvtColor(small, cv2.COLOR_GRAY2RGB)
+            try:
+                src, dst, px = _pairs_lightglue(template, rgb)
+            except (FileNotFoundError, ImportError) as e:      # no model file downloaded: ORB still works
+                print("LightGlue not available (%r), trying ORB" % e)
+                continue
+        else:
+            src, dst = _pairs_orb(template, gray)
+            px = RANSAC_PX
+        if len(src) < template.min_inliers:
+            continue
+        cv2.setRNGSeed(0)                              # same frame, same answer
+        h, m = cv2.findHomography(src, dst, RANSAC_METHOD, px)
+        k = int(m.sum()) if m is not None else 0
+        if h is not None and k >= template.min_inliers:
+            H, mask, inliers = h, m, k
+            break
+        inliers = max(inliers, k)
+    if H is None:
         return Located(False, inliers)
 
-    shifts = _block_shifts(template, small, H) if refine_blocks else {}
+    # stage 2 on the grey frame: the blocks' own edges say where they are
+    references = {}
+    shifts = _block_shifts(template, gray, H, references) if refine_blocks else {}
     to_frame = np.diag([1 / s, 1 / s, 1.0]) @ H          # template -> full-size frame
     result = Located(True, inliers, homography=to_frame, shifts=shifts,
-                     matches=[(tuple(a), tuple(b / s), bool(k)) for a, b, k in zip(src, dst, mask.ravel())])
+                     matches=[(tuple(a), tuple(b / s), bool(k)) for a, b, k in zip(src, dst, mask.ravel())],
+                     reference_indices=references)
     if len(template.modules) > 1:
-        result.doubtful, result.agreement = _check_blocks(template, image if image.ndim == 3 else None, to_frame, shifts)
+        result.doubtful, result.agreement, result.block_agreement = _check_blocks(
+            template, image if image.ndim == 3 else None, to_frame, shifts)
     for module, pins in template.modules.items():
         dx, dy = shifts.get(module, (0, 0))
         for target, ox, oy in ((result.board_only, 0, 0), (result.pins, dx, dy)):
@@ -161,45 +211,40 @@ def _zncc(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def _check_blocks(template: Template, rgb: Optional[np.ndarray], to_frame: np.ndarray,
-                  shifts: Dict[str, Tuple[int, int]]) -> Tuple[Dict[str, str], float]:
+                  shifts: Dict[str, Tuple[int, int]]) -> Tuple[Dict[str, str], float, Dict[str, float]]:
     """Does each placed block look like its own block in the reference photo? A wrong match can put the whole board
     one block off (identical blocks, a far or partly hidden board): then the frame at Reader 1's place looks like
     Reader 2 of the reference (another housing colour), or like nothing. Such modules are returned with the reason;
     the reader reports them as not found instead of reading the wrong pins (bench, 31 Oct). Also returns the mean
-    agreement of the blocks with their own reference blocks (used to choose the board variant)."""
-    from .colour import srgb_to_lab
+    agreement of the blocks with their own reference blocks (used to choose the board variant) and each block's own
+    agreement (the wire reader uses it to tell a doubtful block from a doubtful wire)."""
     th, tw = template.gray.shape[:2]
     if rgb is None:
-        return {}, -1.0
+        return {}, -1.0, {}
     view = cv2.warpPerspective(rgb, np.linalg.inv(to_frame), (tw, th), flags=cv2.INTER_AREA)
-    if template.lab is None:
-        template.lab = srgb_to_lab(template.rgb.astype(np.float64)).astype(np.float32)
-    left, top, right, bottom = template.block_margin
-    boxes = {}
-    for m, pins in template.modules.items():
-        xs, ys = [p["x"] for p in pins], [p["y"] for p in pins]
-        boxes[m] = (max(0, int(min(xs)) - left), max(0, int(min(ys)) - top),
-                    min(tw, int(max(xs)) + right), min(th, int(max(ys)) + bottom))
-    doubtful, agreements = {}, []
+    ref_lab = _lab(template)
+    boxes = _block_boxes(template)
+    doubtful, agreements, by_module = {}, [], {}
     for m, (x0, y0, x1, y1) in boxes.items():
         dx, dy = shifts.get(m, (0, 0))
         X0, Y0, X1, Y1 = x0 + dx, y0 + dy, x1 + dx, y1 + dy
         if X0 < 0 or Y0 < 0 or X1 > tw or Y1 > th:
             continue
         here = srgb_to_lab(view[Y0:Y1, X0:X1].astype(np.float64))
-        own = _zncc(here, template.lab[y0:y1, x0:x1])
+        own = _zncc(here, ref_lab[y0:y1, x0:x1])
         agreements.append(own)
+        by_module[m] = own
         if own < AGREE_MIN:
             doubtful[m] = f"looks unlike its reference block (agreement {own:.2f})"
             continue
         for o, (ox0, oy0, _, _) in boxes.items():       # blocks with as many pins could be mistaken for each other
-            ref = template.lab[oy0:oy0 + (y1 - y0), ox0:ox0 + (x1 - x0)]
+            ref = ref_lab[oy0:oy0 + (y1 - y0), ox0:ox0 + (x1 - x0)]
             if o != m and len(template.modules[o]) == len(template.modules[m]) and ref.shape == here.shape:
                 other = _zncc(here, ref)
                 if other > own:
                     doubtful[m] = f"looks more like {o} ({other:.2f}) than itself ({own:.2f})"
                     break
-    return doubtful, float(np.mean(agreements)) if agreements else -1.0
+    return doubtful, float(np.mean(agreements)) if agreements else -1.0, by_module
 
 
 def _pairs_orb(template: Template, gray: np.ndarray):
@@ -253,30 +298,58 @@ def _pairs_lightglue(template: Template, rgb: np.ndarray):
     return src.reshape(-1, 2), dst.reshape(-1, 2), RANSAC_PX / sb
 
 
-def _block_shifts(template: Template, small: np.ndarray, H: np.ndarray) -> Dict[str, Tuple[int, int]]:
+def _block_boxes(template: Template) -> Dict[str, Tuple[int, int, int, int]]:
+    """module -> the box around its pins (template px), grown by the template's block margin."""
+    th, tw = template.gray.shape[:2]
+    left, top, right, bottom = template.block_margin
+    boxes = {}
+    for m, pins in template.modules.items():
+        xs, ys = [p["x"] for p in pins], [p["y"] for p in pins]
+        boxes[m] = (max(0, int(min(xs)) - left), max(0, int(min(ys)) - top),
+                    min(tw, int(max(xs)) + right), min(th, int(max(ys)) + bottom))
+    return boxes
+
+
+def _lab(template: Template) -> np.ndarray:
+    """CIELAB of the template's photo, computed on first use."""
+    if template.lab is None:
+        template.lab = srgb_to_lab(template.rgb.astype(np.float64)).astype(np.float32)
+    return template.lab
+
+
+def _block_shifts(template: Template, small: np.ndarray, H: np.ndarray,
+                  reference_indices: Optional[Dict[str, int]] = None) -> Dict[str, Tuple[int, int]]:
     """Stage 2: each block's offset in template pixels, found in the frame warped into the template's view."""
     th, tw = template.gray.shape[:2]
     warped = cv2.warpPerspective(small, np.linalg.inv(H), (tw, th))
-    left, top, right, bottom = template.block_margin
+    gray = warped if warped.ndim == 2 else cv2.cvtColor(warped, cv2.COLOR_RGB2GRAY)
+    boxes = _block_boxes(template)
+    column = (min(b[0] for b in boxes.values()), min(b[1] for b in boxes.values()),
+              max(b[2] for b in boxes.values()), max(b[3] for b in boxes.values()))
 
-    def match(box, cx, cy, r):
+    def match(box, cx, cy, r, references=()):
         x0, y0, x1, y1 = box
         patch = template.gray[y0:y1, x0:x1]
         X0, Y0 = max(0, x0 + cx - r), max(0, y0 + cy - r)
-        region = warped[Y0:y1 + cy + r, X0:x1 + cx + r]
+        region = gray[Y0:y1 + cy + r, X0:x1 + cx + r]
         if region.shape[0] < patch.shape[0] or region.shape[1] < patch.shape[1]:
-            return cx, cy
-        _, _, _, loc = cv2.minMaxLoc(cv2.matchTemplate(region, patch, cv2.TM_CCOEFF_NORMED))
-        return X0 + loc[0] - x0, Y0 + loc[1] - y0
+            return (cx, cy), 0
+        # Empty views of the same rigid housing at different angles/lighting. Wires are outside these crops;
+        # the highest correlation chooses a view, never a wire colour or an annotated answer at runtime.
+        index, best = max(enumerate(cv2.minMaxLoc(cv2.matchTemplate(region, ref, cv2.TM_CCOEFF_NORMED))
+                                    for ref in [patch, *references]), key=lambda item: item[1][1])
+        loc = best[3]
+        return (X0 + loc[0] - x0, Y0 + loc[1] - y0), index
 
-    boxes = {}
-    for module, pins in template.modules.items():
-        xs = [p["x"] for p in pins]; ys = [p["y"] for p in pins]
-        boxes[module] = (max(0, int(min(xs)) - left), max(0, int(min(ys)) - top),
-                         min(tw, int(max(xs)) + right), min(th, int(max(ys)) + bottom))
-    # first all blocks together: the whole column of blocks has one shape, so it cannot slip by one pin
-    column = (min(b[0] for b in boxes.values()), min(b[1] for b in boxes.values()),
-              max(b[2] for b in boxes.values()), max(b[3] for b in boxes.values()))
-    cdx, cdy = match(column, 0, 0, BLOCK_SEARCH)
+    if len(boxes) == 1 and template.block_references:
+        shifts = {}
+        for m, b in boxes.items():
+            shifts[m], index = match(b, 0, 0, BLOCK_SEARCH, template.block_references.get(m, ()))
+            if reference_indices is not None:
+                reference_indices[m] = index
+        return shifts
+
+    # first all blocks together: the whole column of blocks has one shape, so it cannot slip by one pin unnoticed
+    (cdx, cdy), _ = match(column, 0, 0, BLOCK_SEARCH)
     # then each block on its own, only a little around the common offset
-    return {m: match(b, cdx, cdy, BLOCK_TIGHT) for m, b in boxes.items()}
+    return {m: match(b, cdx, cdy, BLOCK_TIGHT)[0] for m, b in boxes.items()}

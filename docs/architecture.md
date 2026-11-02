@@ -1,5 +1,8 @@
 # Architecture
 
+> **Current bench hardware — 2 Nov 2026 (confirmed by Xiaoxin): AXIS A1610 controller + A4020-E reader.** Keep `A1610.READER1` / `A1610.READER2` label and record IDs. Earlier A1601 bench measurements and the `A1610_A1601.jpg` reference variant retain their original provenance; they are not new A1610 results. Collect a separate batch after the hardware change.
+
+
 One app, two modes. The app (`Scripts/App`) never touches the camera, the perception models or the file system directly. It talks to five contracts, and `App/Composition.cs` decides at start-up which implementation stands behind each one.
 
 ```

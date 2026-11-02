@@ -1,5 +1,8 @@
 # Package B · AR runtime and device
 
+> **Current bench hardware — 2 Nov 2026 (confirmed by Xiaoxin): AXIS A1610 controller + A4020-E reader.** Keep `A1610.READER1` / `A1610.READER2` label and record IDs. Earlier A1601 bench measurements and the `A1610_A1601.jpg` reference variant retain their original provenance; they are not new A1610 results. Collect a separate batch after the hardware change.
+
+
 **Goal:** the live camera view: real AR frames for the readers, and markers that stay on the terminals while the phone moves. The app runs on an Android phone from `Scenes/App.unity`.
 
 ## You own

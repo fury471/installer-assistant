@@ -39,7 +39,7 @@ def main():
         if s < 1:
             bgr = cv2.resize(bgr, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        res = locate(tpl, rgb, refine_blocks=tpl.name == "A1610")
+        res = locate(tpl, rgb)
         photo = os.path.basename(f)[:-5]
         truth = {ann["module"]: ann["terminals"]}
         for m in ann.get("other_modules", []):
@@ -54,6 +54,7 @@ def main():
                              "view": ann.get("view", ""), "module": module, "pin": i + 1, "name": t["name"],
                              "colour": t["colour"], "cable": t.get("cable", ""), "unclear": t.get("unclear", ""),
                              "located": res.found, "file": name if res.found else "", "margin": MARGIN})
+                rows[-1]["reference_index"] = res.reference_indices.get(module, 0)
         print(photo, "found" if res.found else "NOT found")
     with open(os.path.join(out, "labels.csv"), "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))

@@ -1,5 +1,9 @@
 {
   "image": "A4020E.jpg", "width": 1200, "height": 1600, "pin_spacing": 56, "wire_direction": "down", "sharp_min": 150, "matcher": "lightglue", "min_inliers": 30,
+  "block_margin": [35, 155, 35, -15],
+  "block_references": {"A4020E": ["A4020E_block_room_front.png", "A4020E_block_flash_front.png", "A4020E_block_room_tilt.png", "A4020E_block_flash_tilt.png"]},
+  "wire_reference_margin": 3,
+  "wire_references": {"A4020E": ["A4020E_empty_room_front.png", "A4020E_empty_flash_front.png", "A4020E_empty_room_tilt.png", "A4020E_empty_flash_tilt.png"]},
   "modules": {
     "A4020E": [
       {"name": "+", "x": 557, "y": 550},

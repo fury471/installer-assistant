@@ -1,5 +1,8 @@
 # Package A log (Yu)
 
+> **Current bench hardware — 2 Nov 2026 (confirmed by Xiaoxin): AXIS A1610 controller + A4020-E reader.** Keep `A1610.READER1` / `A1610.READER2` label and record IDs. Earlier A1601 bench measurements and the `A1610_A1601.jpg` reference variant retain their original provenance; they are not new A1610 results. Collect a separate batch after the hardware change.
+
+
 ## 2026-10-22 · M0 session 1, templates, annotations
 
 **Session 1 shoot**
@@ -266,4 +269,115 @@
   from moving the phone (the marks lie on one line), so the orientation was wrong: default now 2 (image y mirrored
   only; 0 had put the marks across the screen). The number is shown after every read so the next test confirms it.
   Pins never take their depth from a plane (the table holding the controller); only the label uses a raycast.
+
+## 2026-11-02 · Correct A4020-E terminal identities against the physical reference view
+
+- Xiaoxin confirmed the top/reference-photo view's physical left-to-right order as **minus, plus, A, B**. The local
+  template had wrongly assigned **B, A, plus, minus** to those positions. The earlier test repeated that mistaken
+  assignment; a passing test did not establish the physical identity of the slots.
+- Corrected only the names' coordinates in `templates/A4020E.json`: response order remains **plus, minus, A, B**,
+  with x = **557, 502, 613, 674** respectively. The geometric slots and trained `pins.joblib` are unchanged.
+  No retraining, wiring-rule change, record-schema change, or new phone APK is needed for this correction.
+- Three independent physical-slot checks failed before the fix and passed after: reference order, actual matching
+  of a rotated image against fixed physical annotations, and the production patch cutter sampling four known
+  colours painted at those physical positions. Full Python suite: 41 passed.
+- Restarted the port-8000 service with its existing `IA_SHARP_SCALE=0.6`; new captures go to
+  `data/live/2026-11-02-f-terminal-map`. HTTP replay of the saved failing frame from batch e (f315, replay ID 9000315)
+  gives physical left-to-right **minus/no wire, plus/red, A/green, B/yellow**. Positions and colour predictions are
+  exactly the old ones reassigned to the correct terminal identities. The black wire's no-wire prediction remains
+  a separate recognition error. Replay evidence is in `data/reader-terminal-mapping-checks/` (not Git).
+- Earlier saved reader records were made with the old mapping and are not automatically migrated. Exit the current
+  check and scan/read the reader again before using its stored colours; do not treat old records as corrected data.
+
+## 2026-11-02 · A4020-E housing calibration from the 24-photo black-wire batch
+
+- Verified all 24 session3 annotations (96 slots). The old narrow local matching strip included openings, wires,
+  nearby components and highlights; its x offset could jump almost one terminal. Broadening that strip alone
+  did not reliably handle the different projected housing shape at front/tilted views.
+- Added four small, grayscale housing references from only the all-empty R01 row (room/flash x front/tilt).
+  Board rectification plus the median manual pin translation places each crop into the existing template's
+  coordinate system. Matching uses the rigid housing above the wire entries; pin identities, geometry and the
+  classifier's empty reference remain unchanged. The controller keeps its existing column refinement.
+- `ml/tools/calibrate_reader_block.py` reproduces the four reference PNGs byte-for-byte from that row. Source
+  annotation/reference hashes and generation details accompany the assets. No wired row is used as a reference.
+- Unified `build_patches` and `eval_locate` with the service's refinement (both had disabled it on the reader).
+  Actual 1920-long-side evaluation: 24/24 located; all 96 pins within half a pitch; maximum error **0.938 -> 0.277**
+  pitches; frames with any error above 0.25 pitch **15 -> 1**. Median per-photo median error after: **0.052** pitches.
+  The 20 wired photos are same-session development validation, not an independent-day or live-phone final test.
+- Generated/checked all 96 `data/patches/session3` crops (72 x 32, including training margin). Diagnostics and
+  before/after images: `data/reader-localization-fix/`. Full Python suite: **43 passed**; housing mutation without
+  calibrated references fails the new regression as intended. A rotated-frame evaluation regression also passes.
+- Restarted localhost:8000, preserving `IA_SHARP_SCALE=0.6`; new captures: `data/live/2026-11-02-g-reader-localization`.
+  HTTP replay of R04 flash/tilt located every slot with max error **0.101** pitches after JPEG encoding. No APK change.
+- No model training or replacement: pins.joblib SHA256 remains
+  `ddc1324a151dd2750c23efdcd66e13d0c77b57002be9eb078ec19c04694568ee`. Old training data is still needed for a merged
+  retrain. App live-frame testing and black-wire presence/colour improvements remain separate follow-up work.
+
+## 2026-11-02 · First merged session1 + session3 training run
+
+- Original session1 photos, annotations and patches were restored under data/. Refreshed only the old reader
+  patches with the corrected local positioning: 88 usable reader windows; the 1344 controller windows remain
+  unchanged. Added session3's 96 windows: 1528 training pins, 26 wiring groups. Original reader patches/labels
+  and the active model are backed up in `data/readerblack-training/before/`.
+- Added candidate-output and worker-count arguments to train_pins, plus per-session metrics from the existing
+  held-out predictions. Ran once: `python -m ml.eval.train_pins --sessions session1 session3 --workers 4
+  --no-checks --out ml/models/pins_readerblack_20261102.joblib`. This runs one 7-fold wiring-group CV and a final
+  fit; extra domain checks and repeated tests were not run. Session2 was not used.
+- Candidate overall grouped accuracy: 95.4%; controller: 97.3%; new session3: 74/96 (77.1%). On the new batch,
+  the old active model (which did not train on that batch) has 46 empty-slot false positives and 18/20 correct
+  black wires. Candidate held-out predictions reduce empty-slot false positives to 6 but correctly classify
+  only 12/20 black wires. All four green examples are predicted black and all four yellow examples are missed;
+  the single full-colour wiring group does not establish reliable generalisation in this batch.
+- Kept the existing active model: the targeted black-wire performance regresses despite improved total accuracy.
+  Candidate remains available at the path above; no service restart or APK change. Full metrics, baseline
+  comparison and the decision are in `data/readerblack-training/`. Active pins.joblib SHA256 is unchanged:
+  `ddc1324a151dd2750c23efdcd66e13d0c77b57002be9eb078ec19c04694568ee`.
+
+## 2026-11-02 · Diagnose reference mismatch and thin-black-wire suppression
+
+- Diagnosed the previous candidate using saved crops/features rather than rerunning the old validation. Empty
+  reader windows differed from the single old empty reference on a median 22.4% of pixels. Paired empty views
+  selected by the rigid housing reduced that mismatch. Added four packed empty-window references generated from
+  all-empty session3/R01 only, and persisted the locator's reference index in labels.csv for training/runtime parity.
+- A housing-reference candidate eliminated empty false positives but still missed eight black windows. These are
+  recorded individually in `data/readerblack-training/diagnosis/black-missed-pins.json`. Independent per-pixel
+  reference shifts were suppressing the thin black line by matching it to nearby dark background pixels.
+- Added `housing-aligned`: a single reference translation selected on the least-changed 70% of the window. This
+  applies only to reader features, in both original and augmented training windows and live inference. Existing
+  model metadata defaults to the old comparison; the controller's reference/comparison functions are unchanged.
+- Each actual preprocessing correction received one grouped CV run, not a hyperparameter search. The aligned
+  candidate is `ml/models/pins_readerblack_aligned_20261102.joblib`. Excluding the four empty reference photos,
+  the remaining 20 photos/80 pins yield **20/20 black correctly classified**, **3/48 empty false positives**,
+  **1/4 green correct**, **1/4 yellow correct**. These are same-session development results, not live-phone results.
+- An actual ClassicalReader call with this candidate in memory correctly reads the previously missed + black
+  window. Grouped predictions are now saved once with the validation, allowing per-pin diagnosis without rerunning
+  CV. Diagnostic images/metrics are in `data/readerblack-training/diagnosis/`.
+- Keep the existing active model: black detection has improved, but green/yellow colour regression remains and
+  must be addressed before replacing the service model. No service restart or APK change for this candidate.
+  No extra photos or manual annotation were requested in this step; the current batch sufficed for diagnosis.
+
+## 2026-11-02 · Reader entry foreground colours and activated model
+
+- Inspected the actual pixels selected on the four full-colour session3 views. The old fixed centre-band top-D
+  sampler selected the dark opening shadow on green windows and green PCB pixels on yellow windows; the wires
+  bent toward the crop edge, while a neighbouring yellow wire entered the green window farther away.
+- Added `housing-anchored` mode: colour summaries use changed, chromatic connected foreground entering this slot;
+  components beginning farther along the crop cannot displace its entry wire. Neutral/dark wires use changed
+  near-entry pixels. Presence features use the entry plus half a canonical pin pitch, accommodating sideways
+  exits. Train, augmentation and live inference use identical flags; legacy models/controller features retain
+  their original extraction. No terminal name or expected colour is used to choose these pixels.
+- One grouped validation for this preprocessing change: 1528 windows across 26 wiring groups. Excluding the four
+  empty reference images, the remaining 20 photos/80 pins have **32/32 wired colours correct** (black20, red4,
+  green4, yellow4), **4/48 empty false positives**, all below 0.8 confidence; no high-confidence errors. These
+  are same-session development results, not a fresh-phone/final-test score. Session2 remains unused.
+- New foreground regressions: 2 passed (green and yellow against a centre shadow and later crossing wire).
+  Did not repeat the full project test suite. Saved sampled-pixel/before-after diagnostics and validation in
+  `data/readerblack-training/colour-diagnosis/`.
+- Promoted `pins_readerblack_anchored_20261102.joblib` to the active `ml/models/pins.joblib`; SHA256
+  `f6d4ce6daaed633994edd403fa0403f13b32a8a670f19e876211005305d535cd`. Original model remains in
+  `data/readerblack-training/before/pins.joblib`. Model metadata declares `reference_mode=housing-anchored`.
+- Restarted the port-8000 perception service, preserving `IA_SHARP_SCALE=0.6`; new saved frames go to
+  `data/live/2026-11-02-h-reader-colour`. Actual HTTP replays of room/flash R06 front images both return
+  plus/red, minus/black, A/green, B/yellow. Flash yellow is still low confidence (0.482) and needs confirmation.
+  Existing APK works; fresh device scans with supplement light off/on are the next practical verification.
 

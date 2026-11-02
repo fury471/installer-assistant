@@ -57,6 +57,41 @@ def test_a_wire_of_uncertain_colour_is_still_a_wire():
     assert decide(proba)[0] != 0
 
 
+def test_aligned_comparison_keeps_a_thin_black_wire_near_dark_background():
+    """Per-pixel shifts can reuse one nearby dark background line to erase two different lines. A physical
+    whole-window alignment must keep the extra wire visible, without changing the legacy comparison mode."""
+    rng = np.random.default_rng(4)
+    ref = rng.integers(100, 180, (26, 66, 3), dtype=np.uint8)
+    ref[SLACK + 8, SLACK + 12:SLACK + 60] = 15
+    wired = window(ref, SLACK).copy()
+    wired[10, 12:60] = 15
+    erased, _, _ = compare(wired, ref)
+    retained, _, _ = compare(wired, ref, aligned=True)
+    assert (erased[10, 14:56] > 20).mean() < .1
+    assert (retained[10, 14:56] > 20).mean() > .9
+
+
+@pytest.mark.parametrize("wire", ["green", "yellow"])
+def test_anchor_colour_samples_the_entry_wire_instead_of_shadow_or_neighbour(wire):
+    from ml.perception_service.pin_reader import anchor_wire_mask, anchored_colour_features
+    rgb = np.full((20, 60, 3), (70, 110, 80), np.uint8)
+    rgb[7:13, 12:34] = (5, 16, 8)                 # the strong changed shadow selected by the old centre band
+    rgb[0:3, 22:55] = (230, 195, 20)              # another wire crosses only farther from this entry
+    if wire == "green":
+        rgb[16:20, 10:36] = (8, 165, 120)
+    else:
+        rgb[18:20, 10:22] = (230, 190, 20)        # a bent wire leaves the crop sideways soon after its entry
+    D = np.full((20, 60), 30, np.float32)
+    mask = anchor_wire_mask(rgb, D)
+    assert mask[16:].any() and not mask[:13].any()
+    values = anchored_colour_features(rgb, D).reshape(3, 12)
+    assert values.shape == (3, 12)
+    if wire == "green":
+        assert (values[:, 1] < -30).all()
+    else:
+        assert (values[:, 2] > 50).all()
+
+
 @pytest.mark.skipif(not PinReader.available(), reason="no trained wire reader (python -m ml.eval.train_pins)")
 @pytest.mark.parametrize("name", ["A1610", "A4020E"])
 def test_trained_reader_reads_the_empty_reference_as_no_wire(name):

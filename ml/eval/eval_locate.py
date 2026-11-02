@@ -36,7 +36,7 @@ def score_photo(tpl, ann, data_dir, size):
         img = cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
     fh, fw = img.shape[:2]
     t0 = time.perf_counter()
-    res = locate(tpl, img, refine_blocks=tpl.name == "A1610")
+    res = locate(tpl, img)
     ms = (time.perf_counter() - t0) * 1000
     modules = [(ann["module"], ann["terminals"])] + [(m["module"], m["terminals"]) for m in ann.get("other_modules", [])]
     errors, errors1, spacings = [], [], []

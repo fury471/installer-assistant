@@ -1,0 +1,59 @@
+{
+  "method": "Median translation of manual pins after board rectification; empty calibration row only.",
+  "box": [
+    467,
+    395,
+    709,
+    535
+  ],
+  "sources": [
+    {
+      "annotation": "data/annotations/session3/s3_rdr_r01_flash_front.json",
+      "annotation_sha256": "fee5696530071b1b01d044d8c9ba5016d285770468560e100c8b8c41eb77a9ed",
+      "reference": "A4020E_block_flash_front.png",
+      "wire_reference": "A4020E_empty_flash_front.png",
+      "translation": [
+        -0.835968017578125,
+        19.259063720703125
+      ],
+      "reference_sha256": "758d3bdac84e3c4fd868403cebad7f06876abf39a6275e0f86eada1b8d608ee5",
+      "wire_reference_sha256": "3ee2983e8150e1a110fde6e5fac4c663dd0b757ae821a06061bad12cbd3af8ae"
+    },
+    {
+      "annotation": "data/annotations/session3/s3_rdr_r01_flash_tilt.json",
+      "annotation_sha256": "42f2681b6db4d40581b5417f7eaace1381fe392444bc4e943358f6425ba32821",
+      "reference": "A4020E_block_flash_tilt.png",
+      "wire_reference": "A4020E_empty_flash_tilt.png",
+      "translation": [
+        2.047271728515625,
+        -1.435272216796875
+      ],
+      "reference_sha256": "c2d1937d5a0bb4e965ae91b37f98cca58657ca2dcb924b2c3f855f6955dea724",
+      "wire_reference_sha256": "3277075ddb467d8dcb070f9464d352840ad917bccf9ad21e26aa0f4ac94043eb"
+    },
+    {
+      "annotation": "data/annotations/session3/s3_rdr_r01_room_front.json",
+      "annotation_sha256": "e020bb7f59a65023272ff6c0d9c9d99c206e52896a87a5f6f8f226a226b2991f",
+      "reference": "A4020E_block_room_front.png",
+      "wire_reference": "A4020E_empty_room_front.png",
+      "translation": [
+        -0.910125732421875,
+        21.982574462890625
+      ],
+      "reference_sha256": "cf5beafe0dc34cfed0a4e0584e5bc390f67fd94c2ee62514afa5dd7c8e802dd9",
+      "wire_reference_sha256": "b09b84127f2ce336d2215e8d041298ed9b6dc869479495ba4e8693245b44ad7f"
+    },
+    {
+      "annotation": "data/annotations/session3/s3_rdr_r01_room_tilt.json",
+      "annotation_sha256": "5fc7af2ab30a187d7078fd115949c23bab2e602fad9a68eff1942328a71f90c1",
+      "reference": "A4020E_block_room_tilt.png",
+      "wire_reference": "A4020E_empty_room_tilt.png",
+      "translation": [
+        1.677734375,
+        -1.65020751953125
+      ],
+      "reference_sha256": "3038961367ec185c6d21b9d125671c70b26e34648f7f5c84688c40621dc8086b",
+      "wire_reference_sha256": "af01904b6b842129056dbeff6fd1b6848f9a8d4ef0a31bd54c76406e2173a918"
+    }
+  ]
+}

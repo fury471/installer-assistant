@@ -22,6 +22,7 @@ import os
 from concurrent.futures import ProcessPoolExecutor
 from datetime import date
 from functools import lru_cache
+from pathlib import Path
 
 import cv2
 import joblib
@@ -79,17 +80,17 @@ def with_copies(X, y, Xa, idx):
 FEATURE_VERSION = 1      # bump when pin_reader's features change, so the cache below is rebuilt
 
 
-def load_all(data, sessions, templates, augment=True):
+def load_all(data, sessions, templates, augment=True, workers=None, reference_mode="single"):
     """Features of every located window of every template, and its augmented copies (presence only). Cached in
     ml/runs/ (a few minutes to compute); the cache is rebuilt when a labels.csv or FEATURE_VERSION changes."""
-    stamp = [FEATURE_VERSION, augment, list(templates)] + [
+    stamp = [FEATURE_VERSION, augment, list(templates), reference_mode] + [
         os.path.getmtime(os.path.join(data, "patches", s, "labels.csv")) for s in sessions]
-    cache = os.path.join("ml", "runs", "pin_features_%s.npz" % "_".join(sessions))
+    cache = os.path.join("ml", "runs", "pin_features_%s%s.npz" % ("_".join(sessions), "_" + reference_mode if reference_mode != "single" else ""))
     if os.path.exists(cache):
         z = np.load(cache, allow_pickle=False)
         if json.loads(str(z["stamp"])) == stamp:
             return (z["P"], z["C"], z["PA"] if augment else None, z["y"], z["groups"], z["modules"], list(z["files"]))
-    out = _compute_all(data, sessions, templates, augment)
+    out = _compute_all(data, sessions, templates, augment, workers, reference_mode)
     os.makedirs(os.path.dirname(cache), exist_ok=True)
     np.savez_compressed(cache, stamp=json.dumps(stamp), P=out[0], C=out[1],
                         PA=out[2] if augment else np.zeros(0), y=out[3], groups=out[4], modules=out[5],
@@ -99,15 +100,16 @@ def load_all(data, sessions, templates, augment=True):
 
 def _one_window(job):
     """Features of one saved window (runs in a worker process)."""
-    path, name, module, pin, m, augment = job
+    path, name, module, pin, m, augment, reference_index, aligned, anchored = job
     tpl = _template(name)
-    ref = reference_patches(tpl, SLACK)[module][pin - 1]
+    ref = reference_patches(tpl, SLACK, reference_index)[module][pin - 1]
     big = cv2.cvtColor(cv2.imread(path), cv2.COLOR_BGR2RGB)
-    p, c = window_features(window(big, m), ref)
+    p, c = window_features(window(big, m), ref, aligned=aligned, anchored=anchored)
     pa = None
     if augment:
         x0, y0, _, _ = patch_box()
-        pa = [presence_features(*compare(cp, ref)[:2]) for cp in augmented(big, m, (m - x0, m - y0))]
+        pa = [presence_features(*compare(cp, ref, aligned=aligned)[:2], anchored=anchored)
+              for cp in augmented(big, m, (m - x0, m - y0))]
     return p, c, pa
 
 
@@ -116,7 +118,7 @@ def _template(name):
     return Template.load(name)
 
 
-def _compute_all(data, sessions, templates, augment):
+def _compute_all(data, sessions, templates, augment, workers=None, reference_mode="single"):
     jobs, y, groups, modules, files = [], [], [], [], []
     for name in templates:
         for session in sessions:
@@ -128,11 +130,14 @@ def _compute_all(data, sessions, templates, augment):
                 if augment and m < 3:
                     raise SystemExit("augmentation needs windows cut with a margin: run  python -m ml.eval.build_patches")
                 path = os.path.join(folder, r["file"])
-                jobs.append((path, name, r["module"], int(r["pin"]), m, augment))
+                reference_index = int(r.get("reference_index") or 0) if reference_mode.startswith("housing") else 0
+                aligned = reference_mode in ("housing-aligned", "housing-anchored") and name == "A4020E"
+                anchored = reference_mode == "housing-anchored" and name == "A4020E"
+                jobs.append((path, name, r["module"], int(r["pin"]), m, augment, reference_index, aligned, anchored))
                 y.append(int(r["colour"])); groups.append(session + "/" + r["row"])
                 modules.append(r["module"]); files.append(path)
     print(f"computing the features of {len(jobs)} windows ...", flush=True)
-    with ProcessPoolExecutor() as pool:                     # all CPU cores
+    with ProcessPoolExecutor(max_workers=workers) as pool:
         out = list(pool.map(_one_window, jobs, chunksize=32))
     P = np.array([o[0] for o in out]); C = np.array([o[1] for o in out])
     PA = np.array([o[2] for o in out]) if augment else None
@@ -214,15 +219,18 @@ def main():
     ap.add_argument("--no-augment", action="store_true", help="train without the shifted / turned copies")
     ap.add_argument("--no-checks", action="store_true", help="skip the unseen-background / unseen-device checks")
     ap.add_argument("--no-save", action="store_true", help="only measure; keep the saved model")
+    ap.add_argument("--out", type=Path, default=MODEL, help="model output (default: service model)")
+    ap.add_argument("--workers", type=int, default=None, help="feature extraction processes (default: all cores)")
+    ap.add_argument("--reference-mode", choices=["single", "housing", "housing-aligned", "housing-anchored"], default="single")
     a = ap.parse_args()
-    P, C, PA, y, groups, modules, files = load_all(a.data, a.sessions, a.templates, not a.no_augment)
+    P, C, PA, y, groups, modules, files = load_all(a.data, a.sessions, a.templates, not a.no_augment, a.workers, a.reference_mode)
     HELD_GROUPS = groups
     answers = [NO_WIRE] + sorted(set(y.tolist()) - {NO_WIRE})
     everything = np.ones(len(y), bool)
 
     proba, yy = held_out(P, C, PA, y, everything, everything, answers)
     temperature = fit_temperature(proba, yy, answers)
-    report = {"sessions": a.sessions, "templates": a.templates, "rows": len(set(groups)),
+    report = {"sessions": a.sessions, "templates": a.templates, "reference_mode": a.reference_mode, "rows": len(set(groups)),
               "augmented_copies": 0 if PA is None else int(PA.shape[1]), "temperature": round(temperature, 3),
               "ece_before": scores(proba, yy, answers, a.threshold)["ece"],
               "all": scores(proba, yy, answers, a.threshold, temperature)}
@@ -230,6 +238,10 @@ def main():
     for name in a.templates:                     # the same held-out predictions, per device
         sel = device == name
         report[name] = scores(proba[sel], yy[sel], answers, a.threshold, temperature)
+    report["by_session"] = {}
+    for session in a.sessions:
+        sel = np.char.startswith(groups, session + "/")
+        report["by_session"][session] = scores(proba[sel], yy[sel], answers, a.threshold, temperature)
     if not a.no_checks:
         board = device == "A1610"
         blue = np.isin(modules, BLUE)
@@ -244,15 +256,18 @@ def main():
     os.makedirs("ml/runs", exist_ok=True)
     with open("ml/runs/train_pins.json", "w", encoding="utf-8") as f:
         json.dump(report, f, indent=1)
+    np.savez_compressed("ml/runs/train_pins_predictions.npz", proba=proba, y=yy, groups=groups,
+                        modules=modules, files=np.array(files), answers=np.array(answers), temperature=temperature)
     if a.no_save:
         return
     presence, colour = fit(P, C, PA, y, np.arange(len(y)))
-    info = {"trained_on": a.sessions, "templates": a.templates, "date": date.today().isoformat(), "pins": int(len(y)),
+    info = {"trained_on": a.sessions, "templates": a.templates, "reference_mode": a.reference_mode, "date": date.today().isoformat(), "pins": int(len(y)),
             "sklearn": sklearn.__version__, "augmented_copies": report["augmented_copies"],
             "cross_validated": {k: report["all"][k] for k in ("pins_right", "wire_or_not_right",
                                                               "colour_right_on_wired_pins", "ece")}}
-    joblib.dump({"presence": presence, "colour": colour, "temperature": temperature, "info": info}, MODEL, compress=3)
-    print("saved", MODEL, f"({os.path.getsize(MODEL) / 1e6:.1f} MB)")
+    a.out.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump({"presence": presence, "colour": colour, "temperature": temperature, "info": info}, a.out, compress=3)
+    print("saved", a.out, f"({os.path.getsize(a.out) / 1e6:.1f} MB)")
 
 
 if __name__ == "__main__":

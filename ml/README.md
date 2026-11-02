@@ -1,5 +1,8 @@
 # ml – perception (package A)
 
+> **Current bench hardware — 2 Nov 2026 (confirmed by Xiaoxin): AXIS A1610 controller + A4020-E reader.** Keep `A1610.READER1` / `A1610.READER2` label and record IDs. Earlier A1601 bench measurements and the `A1610_A1601.jpg` reference variant retain their original provenance; they are not new A1610 results. Collect a separate batch after the hardware change.
+
+
 | Folder | What |
 | --- | --- |
 | `perception_service/` | The HTTP service the app calls in live mode: `/read` (layer 1, wire colours and positions in the module the label names, where each wire runs back to (`tracing.py`), plus the zone survey of the controller's other modules) and `/compare` (layer 3, independent second opinion). Contract: `perception_service/README.md`. |
