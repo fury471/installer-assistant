@@ -246,3 +246,24 @@
 - App text now asks to hold the phone in front of the block, 30-45 cm, so the holes where the wires go in are seen.
 - Next: label live frames (one saved folder per wiring) and train with them; the model has only seen session-1 stills.
 
+## 2026-11-01 (evening) · AR marks, blur check; the demo board is the A1610
+- AR orientation: with 1 - y only the marks were still in reverse order along the block; the image maps onto the
+  camera texture turned 180 degrees (ArRig.Orientation = 3, both axes). Checked on the K80S: marks along Reader 1 in
+  the right order. A three-finger tap cycles the four orientations on the phone (to check another phone).
+- AR distance: raycasts often missed the board (marks left over the floor after moving). Marks now get their distance
+  from the pin spacing: depth = focal length x spacing / spacing in pixels (pinhole model). Spacing measured on
+  session-1 photos against the 21.5 mm QR labels: A1610/A1601 blocks 4.96 mm (17 photos, IQR 4.78-5.11; taken as
+  5.0 mm, the standard pitch), A4020-E 5.78 mm (13 photos, IQR 5.64-5.88). Raycast only for single points (label).
+- Live frames 19:07 (A1601, evening light): misreads come from motion blur, one-pin slips (stage 2 matches the A1610's
+  blocks, whose printed text differs from the A1601's) and the reading itself (black at 12V missed, empty pins read
+  green). Not tuned further: the final test and demo use the A1610 (decided 1 Nov).
+- Blur check (classical.py): variance of the Laplacian of the module's area at 200 px (Pertuz et al., 2013); below the
+  template's "sharp_min" the pins are not read and the app asks to hold still. Board 450 (live: smeared frame 411,
+  sharp 700-2400; session-1 stills >= 1172), reader 150 (sharp session-1 stills 296-504).
+- Next: live test on the A1610 with saved, labelled batches; retrain with live frames if the reading falls short.
+- 2 Nov, 00:22 (A1601 again): all four wires read right (- black, 12V red, A green, B yellow), but the marks were in
+  reverse order along the block and drifted to the table under the controller after moving. Reverse order cannot come
+  from moving the phone (the marks lie on one line), so the orientation was wrong: default now 2 (image y mirrored
+  only; 0 had put the marks across the screen). The number is shown after every read so the next test confirms it.
+  Pins never take their depth from a plane (the table holding the controller); only the label uses a raycast.
+

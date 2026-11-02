@@ -582,7 +582,7 @@ namespace InstallerAssistant.App
             {
                 // nothing read: the camera was not on the terminals, or the reader failed
                 Sheet("No wires found", "Point the camera at the " + (atController ? rule.Connector.Name + " block" : DeviceWord + "'s terminals") +
-                    " from the front, so you see the holes where the wires go in, then read again.");
+                    " from the front, so you see the holes where the wires go in. Hold it still, then read again.");
                 Btn(sheetButtons, "Read again", ButtonKind.Primary, () => clicked = "rescan");
                 Instruction("No wires found", Warn);
                 return;

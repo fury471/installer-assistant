@@ -11,16 +11,42 @@
      (grey-world white balance, nearest CIELAB reference colour at the pin; colour.py) is used and a warning printed.
   4. Bundle check: tracing.py follows each wire back to the scanned label: "this_cable", "other_cable" or "unknown".
 """
+import json
+import os
 from typing import List, Optional
 
+import cv2
 import numpy as np
 
 from ..colour import classify_patch, grey_world
-from ..locate import Template, locate as find_pins
+from ..locate import TEMPLATES, Template, locate as find_pins
 from ..patches import pin_patches, reference_patches
 from ..pin_reader import SLACK, PinReader, compare
 from ..schemas import CompareRequest, ModuleItems, ReadItem, ReadRequest
 from ..tracing import trace_items
+
+
+# Below this sharpness a module's pins are not read: the frame is blurred (the phone moved). Variance of the Laplacian
+# (a standard focus measure; Pertuz et al., 2013) of the module's area scaled to 200 px. Per device ("sharp_min" in
+# the template JSON), because a smooth housing scores lower: board 450 (live frames of 1 Nov: the smeared frame 411,
+# sharp frames mostly 700-2400; session-1 stills >= 1172), reader 150 (sharp session-1 stills 296-504).
+# IA_SHARP_SCALE multiplies every threshold (0 switches the check off). The app then says "No wires found".
+SHARP_SCALE = float(os.environ.get("IA_SHARP_SCALE", "1"))
+
+
+def sharpness(image: np.ndarray, positions) -> float:
+    """Focus measure of the area around the given pins (normalised positions)."""
+    h, w = image.shape[:2]
+    pts = np.array([(x * w, y * h) for x, y in positions])
+    x0, y0 = np.maximum(pts.min(0) - 40, 0).astype(int)
+    x1, y1 = np.minimum(pts.max(0) + 40, [w, h]).astype(int)
+    patch = image[y0:y1, x0:x1]
+    if patch.size == 0:
+        return 0.0
+    gray = cv2.cvtColor(patch, cv2.COLOR_RGB2GRAY) if patch.ndim == 3 else patch
+    k = 200.0 / max(gray.shape)
+    gray = cv2.resize(gray, None, fx=k, fy=k, interpolation=cv2.INTER_AREA)
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
 class ClassicalReader:
@@ -30,6 +56,8 @@ class ClassicalReader:
         self.templates = {"A1610": Template.load("A1610"), "A4020E": Template.load("A4020E")}
         self._last = None              # (frame, device, result): search once per frame, not once per module
         self._patches = None           # (frame, device, {module: patches}): cut once per frame as well
+        self.sharp_min = {n: float(json.loads((TEMPLATES / (n + ".json")).read_text(encoding="utf-8")).get("sharp_min", 0))
+                          for n in self.templates}
         self.pin_reader = PinReader() if PinReader.available() else None
         if self.pin_reader is None:
             print("No trained wire reader (ml/models/pins.joblib; python -m ml.eval.train_pins): "
@@ -72,6 +100,11 @@ class ClassicalReader:
     def _read_module(self, module: str, terminals: List[str], image: np.ndarray) -> List[ReadItem]:
         positions = self.locate(module, terminals, image)
         device = module.split(".")[0]
+        if all(p is not None for p in positions):
+            sharp, need = sharpness(image, positions), self.sharp_min.get(device, 0.0) * SHARP_SCALE
+            if sharp < need:
+                print("%s blurred (sharpness %.0f < %.0f): not read" % (module, sharp, need))
+                return [ReadItem() for _ in terminals]
         if self.pin_reader is not None and all(p is not None for p in positions):
             tpl = self.templates[device]
             if self._patches is None or self._patches[0] is not image or self._patches[1] != device:
