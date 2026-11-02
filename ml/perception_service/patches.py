@@ -77,8 +77,9 @@ _REFERENCES: Dict[tuple, Dict[str, List[np.ndarray]]] = {}
 
 
 def reference_patches(template: Template, margin: int) -> Dict[str, List[np.ndarray]]:
-    """module -> the same windows cut from the template's own photo (all pins empty), cached."""
-    key = (template.name, margin)
+    """module -> the same windows cut from the template's photo (all pins empty), cached. Pass the board variant
+    that locate() found (template.variant_named(located.variant)) so the windows come from the right revision."""
+    key = (template.name, template.variant, margin)
     if key not in _REFERENCES:
         spacing, direction = geometry(template.name)
         _REFERENCES[key] = {m: [cut(template.rgb, p["x"], p["y"], spacing, direction, margin) for p in pins]

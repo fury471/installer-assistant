@@ -32,7 +32,7 @@ def test_patches_of_a_known_view_match_the_template():
     # the same view with the board placed one block off (Reader 1 where Reader 2 is) is caught
     d = (pins_of(tpl, "A1610.READER2")[0] - pins_of(tpl, "A1610.READER1")[0])
     off = res.homography @ np.array([[1, 0, -d[0]], [0, 1, -d[1]], [0, 0, 1]], float)
-    assert {"A1610.READER1", "A1610.READER2"} & set(_check_blocks(tpl, frame, off, {}))
+    assert {"A1610.READER1", "A1610.READER2"} & set(_check_blocks(tpl, frame, off, {})[0])
 
 
 def pins_of(tpl, module):

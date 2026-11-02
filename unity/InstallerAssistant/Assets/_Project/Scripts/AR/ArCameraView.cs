@@ -53,10 +53,14 @@ namespace InstallerAssistant.AR
         public bool arCamera = true;
         [Tooltip("Largest camera image width the AR camera may give the readers (the perception service works at 1920).")]
         public int arMaxImageWidth = 1920;
-        [Tooltip("Turn on if, on the phone, the marks land mirrored left to right (left pins marked on the right).")]
+        [Tooltip("Turn on if, on the phone, the marks land mirrored in one direction. A three-finger tap on the phone cycles all four orientations to find the right one.")]
         public bool arFlipImageX = false;
-        [Tooltip("Turn on if, on the phone, the marks land mirrored top to bottom (top pins marked at the bottom).")]
+        [Tooltip("Turn on if, on the phone, the marks land mirrored in the other direction. A three-finger tap on the phone cycles all four orientations to find the right one.")]
         public bool arFlipImageY = false;
+        [Tooltip("Distance between neighbouring pins at the controller (mm): sets how far away the marks are. 5.0 for the A1610 / A1601 terminal blocks (measured against the 21.5 mm QR labels).")]
+        public float arControllerPinSpacingMm = 5.0f;
+        [Tooltip("Distance between neighbouring terminals at the device end (mm). 5.8 for the AXIS A4020-E reader (measured against the QR labels).")]
+        public float arDevicePinSpacingMm = 5.8f;
 
         ArRig ar;
 

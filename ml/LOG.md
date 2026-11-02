@@ -225,3 +225,45 @@
   marks if the display-matrix convention differs on the K80S.
 - Speed (slow test machine): controller read 1.1-1.4 s, reader 3.6-4.1 s with the new reader and checks.
 
+## 2026-11-01 · First live test with the AR camera (K80S, AXIS A1601), 68 frames saved (data/live/1101)
+- Service on port 5055 (Windows reserves 7979-8078 here), adb reverse tcp:8000 tcp:5055; app installed by adb push +
+  the phone's file manager (Xiaoxin's phone blocks "Install via USB"). Frames: 1920 x 1080, landscape sensor image.
+- Service time on the laptop: median 451 ms, 95th percentile 772 ms per controller read.
+- AR marks were mirrored across the portrait screen; the service's positions in the frames were right. Cause: image y
+  runs top-down, the camera texture's v bottom-up. ArRig now uses 1 - y (flags still flip either axis).
+- The board was an A1601 again. With only the A1610 reference, empty pins read as wires and blocks were rejected.
+  New: board variants (Template.variants, ml/tools/make_variant.py): the A1601 picture = per-pixel median of 8 frames of
+  the empty board warped into the A1610 template's view, blocks moved back by their stage-2 offsets (stage 2 put the
+  pins exactly on the openings: checked with names drawn). locate() picks the variant whose blocks agree best in
+  colour; the wire reader compares with the variant whose empty pin windows look most like the frame's
+  (classical.closest_variant), because the best-fitting photo for finding the board is not always the best empty board.
+- Replay of all 68 frames: board not found in 14 (close-ups with part of the board, the floor); Reader 1 rejected by the
+  block check in 6 (steep views from above: pins would land on the block tops - right to reject). Empty board,
+  21 frames: 0 false wires on 168 pins (optimistic: 8 of these frames built the A1601 picture). Wired, 7 frames with
+  known wiring (- green, 12V black, A yellow): 45 / 56 pins right (80 %); the A1601 picture alone would give 17 / 56
+  in that warmer light, so the choice of reference matters. Misses: black missed, the orange-ish yellow read red.
+- DISK + LightGlue as fallback for close-ups: still not found (5-8 pairs); not used.
+- App text now asks to hold the phone in front of the block, 30-45 cm, so the holes where the wires go in are seen.
+- Next: label live frames (one saved folder per wiring) and train with them; the model has only seen session-1 stills.
+
+## 2026-11-01 (evening) · AR marks, blur check; the demo board is the A1610
+- AR orientation: with 1 - y only the marks were still in reverse order along the block; the image maps onto the
+  camera texture turned 180 degrees (ArRig.Orientation = 3, both axes). Checked on the K80S: marks along Reader 1 in
+  the right order. A three-finger tap cycles the four orientations on the phone (to check another phone).
+- AR distance: raycasts often missed the board (marks left over the floor after moving). Marks now get their distance
+  from the pin spacing: depth = focal length x spacing / spacing in pixels (pinhole model). Spacing measured on
+  session-1 photos against the 21.5 mm QR labels: A1610/A1601 blocks 4.96 mm (17 photos, IQR 4.78-5.11; taken as
+  5.0 mm, the standard pitch), A4020-E 5.78 mm (13 photos, IQR 5.64-5.88). Raycast only for single points (label).
+- Live frames 19:07 (A1601, evening light): misreads come from motion blur, one-pin slips (stage 2 matches the A1610's
+  blocks, whose printed text differs from the A1601's) and the reading itself (black at 12V missed, empty pins read
+  green). Not tuned further: the final test and demo use the A1610 (decided 1 Nov).
+- Blur check (classical.py): variance of the Laplacian of the module's area at 200 px (Pertuz et al., 2013); below the
+  template's "sharp_min" the pins are not read and the app asks to hold still. Board 450 (live: smeared frame 411,
+  sharp 700-2400; session-1 stills >= 1172), reader 150 (sharp session-1 stills 296-504).
+- Next: live test on the A1610 with saved, labelled batches; retrain with live frames if the reading falls short.
+- 2 Nov, 00:22 (A1601 again): all four wires read right (- black, 12V red, A green, B yellow), but the marks were in
+  reverse order along the block and drifted to the table under the controller after moving. Reverse order cannot come
+  from moving the phone (the marks lie on one line), so the orientation was wrong: default now 2 (image y mirrored
+  only; 0 had put the marks across the screen). The number is shown after every read so the next test confirms it.
+  Pins never take their depth from a plane (the table holding the controller); only the label uses a raycast.
+
