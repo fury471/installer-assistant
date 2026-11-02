@@ -19,6 +19,8 @@ namespace InstallerAssistant.UI
         public int Id;               // reader: terminal index; controller: pin number
         public string Name;
         public Vector2 Pos;
+        /// <summary>True while the camera view knows where this terminal is; Pos is meaningless otherwise.</summary>
+        public bool Known;
         public Mark State = Mark.Hidden;
         public int Colour = -1;
         public RectTransform Root, Vis, Tag, Leader, Pulse, IconHolder;

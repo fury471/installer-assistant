@@ -81,11 +81,12 @@ def _gradient(L):
     return np.hypot(cv2.Sobel(L, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(L, cv2.CV_32F, 0, 1, ksize=3))
 
 
-def compare(win_rgb: np.ndarray, ref_rgb: np.ndarray, slack: int = SLACK):
+def compare(win_rgb: np.ndarray, ref_rgb: np.ndarray, slack: int = SLACK, aligned: bool = False):
     """How the live window differs from the reference window (cut with 'slack' extra px on every side).
     Returns D (colour difference per pixel, CIELAB units, after removing the overall brightness and colour cast),
-    E (edge difference) - each the smallest over shifts up to 'slack' px - and the window's CIELAB colours with the
-    light matched to the reference (von Kries gains estimated on the pixels that did not change)."""
+    E (edge difference), and the light-matched CIELAB colours. Legacy mode minimizes each pixel over nearby shifts.
+    aligned=True instead selects one shared translation using unchanged background, so a thin black wire cannot
+    disappear by borrowing different dark background pixels. This mode must match the model's training metadata."""
     h, w = win_rgb.shape[:2]
     W = srgb_to_lab(win_rgb.astype(np.float64)).astype(np.float32)
     Rf = srgb_to_lab(ref_rgb.astype(np.float64)).astype(np.float32)
@@ -95,17 +96,34 @@ def compare(win_rgb: np.ndarray, ref_rgb: np.ndarray, slack: int = SLACK):
     # every shift of the reference at once: (shifts, h, w, ...) views, then the smallest difference per pixel
     shifted = np.lib.stride_tricks.sliding_window_view(Rf, (h, w), axis=(0, 1))     # (2s+1, 2s+1, 3, h, w)
     diff = shifted - Wc.transpose(2, 0, 1)[None, None]
-    D = np.sqrt(np.einsum("abcij,abcij->abij", diff, diff).min(axis=(0, 1)))
-    E = np.abs(np.lib.stride_tricks.sliding_window_view(GR, (h, w)) - GW).min(axis=(0, 1))
+    distances = np.sqrt(np.einsum("abcij,abcij->abij", diff, diff))
+    reference_rgb = ref_rgb[slack:slack + h, slack:slack + w]
+    if aligned:
+        # One physical translation for the whole reference, selected on the least changed 70% (background).
+        # Independent per-pixel minima can erase a thin black wire by matching it to different nearby dark pixels.
+        flat = distances.reshape(-1, h * w)
+        keep = max(1, int(h * w * .7))
+        cost = np.partition(flat, keep - 1, axis=1)[:, :keep].mean(axis=1)
+        sy, sx = np.unravel_index(int(cost.argmin()), distances.shape[:2])
+        D = distances[sy, sx]
+        E = np.abs(GR[sy:sy + h, sx:sx + w] - GW)
+        reference_rgb = ref_rgb[sy:sy + h, sx:sx + w]
+    else:
+        D = distances.min(axis=(0, 1))
+        E = np.abs(np.lib.stride_tricks.sliding_window_view(GR, (h, w)) - GW).min(axis=(0, 1))
     same = D <= np.percentile(D, 40)            # never empty, even when nothing changed
-    Wl, Rl = _linear(win_rgb), _linear(ref_rgb[slack:slack + h, slack:slack + w])
+    Wl, Rl = _linear(win_rgb), _linear(reference_rgb)
     gain = (np.median(Rl[same], 0) + 1e-3) / (np.median(Wl[same], 0) + 1e-3)
     matched = srgb_to_lab(_srgb(Wl * gain)).astype(np.float32)
     return D, E, matched
 
 
-def presence_features(D: np.ndarray, E: np.ndarray) -> np.ndarray:
+def presence_features(D: np.ndarray, E: np.ndarray, anchored: bool = False) -> np.ndarray:
     """Wire or not, from the differences only: where and how much the window changed, and the shape of the change."""
+    if anchored:
+        # Reader wires can bend out of the crop sideways. Inspect the entry and the first half pin pitch
+        # after it (canonical pin x=10, pitch=24), rather than requiring a wire to reach the far crop edge.
+        D, E = D[:, :22], E[:, :22]
     h, w = D.shape
     parts = [cv2.resize(D, GRID, interpolation=cv2.INTER_AREA).ravel(),
              cv2.resize(E, GRID, interpolation=cv2.INTER_AREA).ravel(),
@@ -135,10 +153,48 @@ def wire_colour_features(D: np.ndarray, matched: np.ndarray) -> np.ndarray:
     return np.concatenate(out).astype(np.float32)
 
 
-def window_features(win_rgb: np.ndarray, ref_rgb: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def anchor_wire_mask(rgb: np.ndarray, D: np.ndarray) -> np.ndarray:
+    """Changed coloured foreground entering this slot, before nearby wires cross the window. No terminal identity
+    or expected wire colour is used. Neutral/dark wires fall back to changed pixels close to the entry."""
+    lab = srgb_to_lab(rgb.astype(np.float64))
+    saturation = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)[..., 1]
+    chroma = np.hypot(lab[..., 1], lab[..., 2])
+    vivid = ((saturation > 165) & (chroma > 20) & (lab[..., 0] > 12) & (D > 12)).astype(np.uint8)[:, 10:36]
+    count, labels, stats, centres = cv2.connectedComponentsWithStats(vivid, 8)
+    candidates = [k for k in range(1, count) if stats[k, cv2.CC_STAT_AREA] >= 4 and stats[k, cv2.CC_STAT_LEFT] <= 7]
+    mask = np.zeros(D.shape, bool)
+    if candidates:
+        k = min(candidates, key=lambda k: (stats[k, cv2.CC_STAT_LEFT], abs(centres[k, 1] - 10),
+                                           -stats[k, cv2.CC_STAT_AREA]))
+        mask[:, 10:36] = labels == k
+    else:
+        yy, xx = np.indices(D.shape)
+        score = D / (1 + ((yy - 10) / 6) ** 2 + ((xx - 10) / 8) ** 2)
+        score[:, :10] = score[:, 22:] = -1
+        mask.ravel()[np.argsort(score.ravel())[-24:]] = True
+    return mask
+
+
+def anchored_colour_features(rgb: np.ndarray, D: np.ndarray) -> np.ndarray:
+    mask = anchor_wire_mask(rgb, D)
+    lab = srgb_to_lab(rgb.astype(np.float64))
+    out = []
+    for end in (20, 28, 36):
+        px = lab[:, 10:end][mask[:, 10:end]]
+        if len(px) < 4:
+            px = lab[mask]
+        chroma = np.hypot(px[:, 1], px[:, 2])
+        out.append(np.concatenate([np.median(px, 0), np.percentile(px, [20, 80], axis=0).ravel(),
+                                   [np.median(chroma), np.median(np.arctan2(px[:, 2], px[:, 1])), np.mean(chroma < 12)]]))
+    return np.concatenate(out).astype(np.float32)
+
+
+def window_features(win_rgb: np.ndarray, ref_rgb: np.ndarray, aligned: bool = False,
+                    anchored: bool = False) -> Tuple[np.ndarray, np.ndarray]:
     """(features for wire-or-not, features for the colour) of one canonical window and its reference."""
-    D, E, matched = compare(win_rgb, ref_rgb)
-    return presence_features(D, E), np.concatenate([features(win_rgb), wire_colour_features(D, matched)])
+    D, E, matched = compare(win_rgb, ref_rgb, aligned=aligned)
+    colours = anchored_colour_features(win_rgb, D) if anchored else wire_colour_features(D, matched)
+    return presence_features(D, E, anchored=anchored), np.concatenate([features(win_rgb), colours])
 
 
 def calibrated(proba: np.ndarray, temperature: float) -> np.ndarray:
@@ -181,11 +237,12 @@ class PinReader:
     def available(path: Optional[Path] = None) -> bool:
         return (path or MODEL).exists()
 
-    def read(self, windows: List[np.ndarray], references: List[np.ndarray]) -> List[Tuple[int, float]]:
+    def read(self, windows: List[np.ndarray], references: List[np.ndarray], aligned: bool = False,
+             anchored: bool = False) -> List[Tuple[int, float]]:
         """windows: canonical pin windows; references: the same windows of the empty device, cut with SLACK px more."""
         if not windows:
             return []
-        F = [window_features(w, r) for w, r in zip(windows, references)]
+        F = [window_features(w, r, aligned=aligned, anchored=anchored) for w, r in zip(windows, references)]
         p_wire = self.presence.predict_proba(np.array([f[0] for f in F]))[:, 1]
         raw = combine(p_wire, self.colour.predict_proba(np.array([f[1] for f in F])))
         best = decide(raw)

@@ -419,7 +419,7 @@ namespace InstallerAssistant.App
                 if (tapped != null)
                 {
                     var m = tapped; tapped = null;
-                    if (readColours[marks.IndexOf(m)] != WireColours.None) yield return ColourPicker(m);
+                    if (!atController || readColours[marks.IndexOf(m)] != WireColours.None) yield return ColourPicker(m);
                     continue;
                 }
                 if (clicked == "zone_ignore")
@@ -464,6 +464,7 @@ namespace InstallerAssistant.App
         IEnumerator ReadWires(Image bar)
         {
             var end = atController ? CableEnd.Controller : CableEnd.Device;
+            if (!atController) view.ClearAnchors(); // a failed retry must not keep the previous reader's slot positions
             foreach (var m in marks) if (m.State != Mark.Edited) m.Set(atController ? Mark.Hidden : Mark.Reading, m.Colour, null);
             int[] colours = null; float[] conf = null; ImagePoint[] where = null;
             ControllerReading crd = null;
@@ -546,16 +547,17 @@ namespace InstallerAssistant.App
         void SetReadMark(int i)
         {
             var m = marks[i];
-            if (readColours[i] == WireColours.None) { m.Set(Mark.Hidden, -1, null); return; }
+            if (atController && readColours[i] == WireColours.None) { m.Set(Mark.Hidden, -1, null); return; }
             Mark s = readEdited[i] ? Mark.Edited : readConfidence[i] < confidenceThreshold ? Mark.Check : Mark.Correct;
             if (m.Set(s, readColours[i], m.Name + "  " + WireColours.Name(readColours[i]))) StartCoroutine(Pop(m.Vis));
         }
 
-        /// <summary>Markers that carry a wire at this end (at the controller, empty pins are not shown).</summary>
+        /// <summary>All reader terminals can be confirmed or corrected, including "no wire" readings.
+        /// At the controller, empty pins are not shown.</summary>
         List<PinMarker> Shown()
         {
             var list = new List<PinMarker>();
-            for (int i = 0; i < marks.Count; i++) if (readColours != null && readColours[i] != WireColours.None) list.Add(marks[i]);
+            for (int i = 0; i < marks.Count; i++) if (readColours != null && (!atController || readColours[i] != WireColours.None)) list.Add(marks[i]);
             return list;
         }
 
@@ -566,7 +568,7 @@ namespace InstallerAssistant.App
                 for (int b = a + 1; b < shown.Count; b++)
                 {
                     int ca = readColours[marks.IndexOf(shown[a])], cb = readColours[marks.IndexOf(shown[b])];
-                    if (ca == cb) return shown[a].Name + " and " + shown[b].Name + " both show " + WireColours.Lower(ca) + ". Tap one to correct it.";
+                    if (ca != WireColours.None && ca == cb) return shown[a].Name + " and " + shown[b].Name + " both show " + WireColours.Lower(ca) + ". Tap one to correct it.";
                 }
             return null;
         }
@@ -578,7 +580,7 @@ namespace InstallerAssistant.App
             string here = EndWord(atController ? CableEnd.Controller : CableEnd.Device);
             if (atController && ZoneOpen()) { ZoneSheet(false); return; }
             if (BundleOpen()) { BundleSheet(false); return; }
-            if (shown.Count == 0)
+            if (shown.Count == 0 || (!atController && Array.TrueForAll(readConfidence, c => c <= 0f)))
             {
                 // nothing read: the camera was not on the terminals, or the reader failed
                 Sheet("No wires found", "Point the camera at the " + (atController ? rule.Connector.Name + " block" : DeviceWord + "'s terminals") +
@@ -587,8 +589,9 @@ namespace InstallerAssistant.App
                 Instruction("No wires found", Warn);
                 return;
             }
-            Sheet(unsure.Count > 0 ? "Check one wire" : shown.Count + " wires read",
-                unsure.Count > 0 ? "The camera is not sure about " + unsure[0].Name + ". Tap it to confirm or correct the colour."
+            Sheet(unsure.Count > 0 ? (unsure.Count == 1 ? "Check one wire" : "Check " + unsure.Count + " wires") : shown.Count + " wires read",
+                unsure.Count > 0 ? (unsure.Count == 1 ? "The camera is not sure about " + unsure[0].Name + ". Tap it to confirm or correct the colour."
+                                                     : "The camera is not sure about " + unsure.Count + " terminals. Tap each amber row to confirm or correct the colour.")
                                  : "Save them as the " + here + " end of " + CableTitle + ", or tap a wire to correct it.");
             foreach (var m in ScreenOrder(shown))
             {
@@ -1045,20 +1048,21 @@ namespace InstallerAssistant.App
                     continue;
                 }
                 if (clicked == "fix") { needsFixAtController = true; yield break; }
-                if (clicked == "recheck_here")
+                if (clicked == "read_again" || clicked == "recheck_here")
                 {
-                    if (op != null) op.RewiredAtDevice();   // Wizard of Oz: the bench now shows the re-wired reader
+                    bool rewired = clicked == "recheck_here";
+                    if (rewired && op != null) op.RewiredAtDevice(); // a plain retry must not fix the Wizard-of-Oz bench
                     view.ShowEnd(CableEnd.Device);
-                    log.Add("recheck_at_reader");
-                    yield return RecheckReader();
+                    log.Add(rewired ? "recheck_at_reader" : "reread_at_reader");
+                    yield return RecheckReader(rewired);
                     continue;
                 }
                 if (clicked == "finish") yield break;
             }
         }
 
-        /// <summary>After a fix at the device end: read this end again and run the same check.</summary>
-        IEnumerator RecheckReader()
+        /// <summary>Read the device end again after a fix or a plain retry, then run the same check.</summary>
+        IEnumerator RecheckReader(bool afterFix)
         {
             foreach (var a in arrows) a.Destroy();
             arrows.Clear();
@@ -1069,7 +1073,7 @@ namespace InstallerAssistant.App
             record = new CableRecord(cable.AtEnd(CableEnd.Device), rule, (int[])readColours.Clone(), (bool[])readEdited.Clone(), DateTime.Now);
             records.Save(record);
             confirmedByYou += CountEdits();
-            log.Add("reader_saved", "colours=" + string.Join(" ", Array.ConvertAll(readColours, WireColours.Name)) + "; after_fix=true");
+            log.Add("reader_saved", "colours=" + string.Join(" ", Array.ConvertAll(readColours, WireColours.Name)) + "; after_fix=" + (afterFix ? "true" : "false"));
             yield return RunCheckAtReader(false);
         }
 
@@ -1117,17 +1121,21 @@ namespace InstallerAssistant.App
         void ReaderVerdictSheet()
         {
             int wrong = Count(Verdict.Wrong), amber = Count(Verdict.Check);
+            bool checkAtController = Array.Exists(results, r => r.Verdict == Verdict.Check && rule.TerminalFor(r.Pin) == null);
             var fixes = ActiveFixes();
             bool here = FixHere;
-            if (wrong > 0 && here)
+            if (wrong > 0 && here && !checkAtController)
                 Sheet(fixes.Count == 1 ? fixes[0].DeviceHeadline + " here" : fixes.Count + " fixes here",
                       (fixes.Count == 1 ? fixes[0].DeviceText : "Tap a red wire for its fix.") +
                       (fixes[0].TouchesPower ? " Do this with the power off." : "") + " No need to go back to the controller.");
             else if (wrong > 0)
                 Sheet("Fix at the controller", (fixes.Count == 1 ? fixes[0].Text : fixes.Count + " fixes. Tap a red wire for its fix.") +
                       " The app shows where on the controller.");
+            else if (checkAtController)
+                Sheet("Check at the controller", "A controller pin outside the reader's four terminals needs confirmation. Go to the controller to check it.");
             else if (amber > 0)
-                Sheet("Check one wire yourself", "The automation is not sure about one wire. Tap the amber wire and decide.");
+                Sheet(amber == 1 ? "Check one wire yourself" : "Check " + amber + " wires yourself",
+                    "The automation is not sure here. Tap an amber row to decide, or read again.");
             else
                 Sheet("All " + marks.Count + " wires correct", "Every wire of " + CableTitle + " lands on the right controller pin.");
 
@@ -1156,11 +1164,14 @@ namespace InstallerAssistant.App
                 Row(MarkOf(r.Verdict), m.Name, colour, WireColours.Name(colour), detail, dc, () => { if (!modalOpen) tapped = mm; });
             }
 
-            if (wrong > 0 && here) Btn(sheetButtons, "Rewired · check again", ButtonKind.Primary, () => clicked = "recheck_here");
+            Btn(sheetButtons, "Read again", ButtonKind.Secondary, () => clicked = "read_again");
+            if (checkAtController) Btn(sheetButtons, "Go to the controller", ButtonKind.Primary, () => clicked = "fix");
+            else if (wrong > 0 && here) Btn(sheetButtons, "Rewired · check again", ButtonKind.Primary, () => clicked = "recheck_here");
             else if (wrong > 0) Btn(sheetButtons, "Go to the controller", ButtonKind.Primary, () => clicked = "fix");
             else if (amber == 0) Btn(sheetButtons, "Finish", ButtonKind.Primary, () => clicked = "finish");
 
-            if (wrong > 0 && here) Instruction("Fix it here, at the " + DeviceWord, Bad);
+            if (checkAtController) Instruction("Check the controller pin", Warn);
+            else if (wrong > 0 && here) Instruction("Fix it here, at the " + DeviceWord, Bad);
             else if (wrong > 0) Instruction("Wiring does not match the controller end", Bad);
             else if (amber > 0) Instruction("Tap the amber wire", Warn);
             else Instruction("Both ends match", Ok);
@@ -1835,14 +1846,30 @@ namespace InstallerAssistant.App
             return n;
         }
 
-        /// <summary>Rows follow the terminals' order on screen, so the list and the board share one layout.</summary>
+        /// <summary>
+        /// Rows follow the terminals' order on screen, so the list and the board share one layout. The axis (a row or a
+        /// column) and its direction come from every terminal of the block that the camera view knows, not from the
+        /// wires that happen to be there: two wires close together would otherwise swap rows between two reads, and
+        /// the sheet would show the colours in a different order than the block (2 Nov).
+        /// </summary>
         List<PinMarker> ScreenOrder(List<PinMarker> list)
         {
             var sorted = new List<PinMarker>(list);
+            if (sorted.Count < 2) return sorted;
             float sx = 0, sy = 0;
-            if (sorted.Count > 1)
+            float x0 = 1, x1 = 0, y0 = 1, y1 = 0;
+            int known = 0;
+            foreach (var m in marks)
+                if (m.Known)
+                {
+                    known++;
+                    x0 = Mathf.Min(x0, m.Pos.x); x1 = Mathf.Max(x1, m.Pos.x);
+                    y0 = Mathf.Min(y0, m.Pos.y); y1 = Mathf.Max(y1, m.Pos.y);
+                }
+            if (known >= 2) { sx = x1 - x0; sy = y1 - y0; }
+            else                                            // nothing anchored yet: use the wires' own positions
             {
-                float x0 = 1, x1 = 0, y0 = 1, y1 = 0;
+                x0 = 1; x1 = 0; y0 = 1; y1 = 0;
                 foreach (var m in sorted) { x0 = Mathf.Min(x0, m.Pos.x); x1 = Mathf.Max(x1, m.Pos.x); y0 = Mathf.Min(y0, m.Pos.y); y1 = Mathf.Max(y1, m.Pos.y); }
                 sx = x1 - x0; sy = y1 - y0;
             }
@@ -1899,6 +1926,7 @@ namespace InstallerAssistant.App
                 Vector2 p;
                 bool known = view.TryGetPosition(CameraKeys.Of(marksEnd, k), out p);
                 if (known) m.MoveTo(p);
+                m.Known = known;
                 bool show = known && m.State != Mark.Hidden;
                 if (m.Root.gameObject.activeSelf != show) m.Root.gameObject.SetActive(show);
                 m.Animate(t, inv);

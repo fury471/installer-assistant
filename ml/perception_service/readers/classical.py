@@ -5,6 +5,8 @@
      survey asks about the other modules of the same frame and gets the same result.
   2. patches.py: the frame warped into the template's view; a window per pin where its wire leaves, in the same
      canonical shape for every device, and the same window from the device's empty reference photo.
+     A block that does not look like its own block in that photo (a far, soft or badly lit frame) is not read at
+     all: its highlights would be read as wires (TRUST_MIN above).
   3. pin_reader.py: one general reader for every device says no wire / red / black / green / yellow, with a
      temperature-scaled confidence (ml/eval/train_pins.py): wire or not from how the window differs from the empty
      reference, the colour from the wire's own pixels. If ml/models/pins.joblib is missing, the old baseline
@@ -32,6 +34,13 @@ from ..tracing import trace_items
 # sharp frames mostly 700-2400; session-1 stills >= 1172), reader 150 (sharp session-1 stills 296-504).
 # IA_SHARP_SCALE multiplies every threshold (0 switches the check off). The app then says "No wires found".
 SHARP_SCALE = float(os.environ.get("IA_SHARP_SCALE", "1"))
+
+# How much a placed block must look like its own block in the reference photo before its pins are read at all
+# (colour ZNCC, locate.py). A far, soft or badly lit block can differ from the reference everywhere, and then the
+# "changed pixels" that the wire reader looks for are the block's own highlights: on 2 Nov an empty block was read as
+# eight black wires that way. Such a frame is refused instead of being read, and the app asks for another one.
+# Session 1: frames that were read correctly >= 0.34, the eight phantom wires 0.22. IA_TRUST_MIN overrides it.
+TRUST_MIN = float(os.environ.get("IA_TRUST_MIN", "0.25"))
 
 
 def sharpness(image: np.ndarray, positions) -> float:
@@ -69,13 +78,21 @@ class ClassicalReader:
         if tpl is None or module not in tpl.modules:
             return [None] * len(terminals)
         if self._last is None or self._last[0] is not image or self._last[1] != device:
-            res = find_pins(tpl, image, refine_blocks=(device == "A1610"))   # RGB: LightGlue uses colour
+            # stage 2 for every device: its block also stands above the board. On the A4020-E the board fit alone left
+            # the four pins about a third of a terminal away from the openings, and every wire was read one terminal
+            # off in the close-up frames of 2 Nov; with the block found on its own they landed on the openings.
+            res = find_pins(tpl, image, refine_blocks=True)   # RGB: LightGlue uses colour
             self._last = (image, device, res)
         res = self._last[2]
         if not res.found:
             return [None] * len(terminals)
         if module in res.doubtful:                     # placed, but it does not look like this module: say so
             print("%s not trusted: %s" % (module, res.doubtful[module]))
+            return [None] * len(terminals)
+        look = res.block_agreement.get(module, -1.0)
+        if look >= 0 and look < TRUST_MIN:             # too unlike the reference photo to read anything off it
+            print("%s not read: the block does not look like the reference (agreement %.2f < %.2f)"
+                  % (module, look, TRUST_MIN))
             return [None] * len(terminals)
         if len(res.pins[module]) != len(terminals):
             return [None] * len(terminals)
@@ -110,8 +127,14 @@ class ClassicalReader:
             if self._patches is None or self._patches[0] is not image or self._patches[1] != device:
                 windows = pin_patches(tpl, self._last[2], image)
                 self._patches = (image, device, windows, closest_variant(tpl, windows))
-            refs = reference_patches(self._patches[3], SLACK)[module]
-            reads = self.pin_reader.read(self._patches[2][module], refs)
+            # Existing model bundles keep their original reference contract. A model trained with housing-view
+            # references uses the very same view index recorded by localization and by the patch builder.
+            mode = self.pin_reader.info.get("reference_mode", "single")
+            index = self._last[2].reference_indices.get(module, 0) if mode.startswith("housing") else 0
+            refs = reference_patches(self._patches[3], SLACK, index)[module]
+            reads = self.pin_reader.read(self._patches[2][module], refs,
+                                         aligned=mode in ("housing-aligned", "housing-anchored") and device == "A4020E",
+                                         anchored=mode == "housing-anchored" and device == "A4020E")
             return [ReadItem(colour=c, confidence=conf, x=x, y=y, found=True)
                     for (c, conf), (x, y) in zip(reads, positions)]
         return self._read_module_baseline(positions, image)

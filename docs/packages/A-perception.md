@@ -1,5 +1,8 @@
 # Package A · Perception and AI
 
+> **Current bench hardware — 2 Nov 2026 (confirmed by Xiaoxin): AXIS A1610 controller + A4020-E reader.** Keep `A1610.READER1` / `A1610.READER2` label and record IDs. Earlier A1601 bench measurements and the `A1610_A1601.jpg` reference variant retain their original provenance; they are not new A1610 results. Collect a separate batch after the hardware change.
+
+
 **Goal:** the live readers return what the Wizard of Oz returns today, from real camera frames, for **any** wiring the installer makes, with calibrated confidence, and we can show how accurate they are.
 
 ## You own

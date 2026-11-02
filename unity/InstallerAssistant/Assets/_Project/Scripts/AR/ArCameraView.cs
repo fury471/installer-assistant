@@ -25,7 +25,7 @@ namespace InstallerAssistant.AR
     ///
     /// Stage 1 (ArRig.cs), the AR Foundation 6.5 camera, keeping this class's public behaviour.
     ///   Frames    ARCameraManager.TryAcquireLatestCpuImage(out XRCpuImage img); img.Convert(new
-    ///             XRCpuImage.ConversionParams(img, TextureFormat.RGBA32, XRCpuImage.Transformation.MirrorY), buffer)
+    ///             XRCpuImage.ConversionParams(img, TextureFormat.RGBA32, XRCpuImage.Transformation.MirrorX), buffer)
     ///             gives RGBA32 in Unity's bottom-up order (what CameraFrame expects). Dispose the image.
     ///             Intrinsics: ARCameraManager.TryGetIntrinsics(out XRCameraIntrinsics k) → fx fy cx cy (pixels).
     ///             Pose: the AR camera's localToWorldMatrix, column-major.
@@ -53,9 +53,9 @@ namespace InstallerAssistant.AR
         public bool arCamera = true;
         [Tooltip("Largest camera image width the AR camera may give the readers (the perception service works at 1920).")]
         public int arMaxImageWidth = 1920;
-        [Tooltip("Turn on if, on the phone, the marks land mirrored in one direction. A three-finger tap on the phone cycles all four orientations to find the right one.")]
+        [Tooltip("Device override only: mirror image x before applying the camera background's display transform.")]
         public bool arFlipImageX = false;
-        [Tooltip("Turn on if, on the phone, the marks land mirrored in the other direction. A three-finger tap on the phone cycles all four orientations to find the right one.")]
+        [Tooltip("Device override only: mirror image y before applying the camera background's display transform.")]
         public bool arFlipImageY = false;
         [Tooltip("Distance between neighbouring pins at the controller (mm): sets how far away the marks are. 5.0 for the A1610 / A1601 terminal blocks (measured against the 21.5 mm QR labels).")]
         public float arControllerPinSpacingMm = 5.0f;
@@ -173,9 +173,8 @@ namespace InstallerAssistant.AR
             if (ar != null) return ar.TryGetPosition(key, out position);
             position = Vector2.zero;
             Vector2 raw;
-            if (!anchors.TryGetValue(key, out raw) || layerSize.x <= 0 || layerSize.y <= 0) return false;
-            Vector2 d = ToDisplay(raw);
-            position = new Vector2(0.5f + (d.x - 0.5f) * displaySize.x / layerSize.x, 0.5f + (d.y - 0.5f) * displaySize.y / layerSize.y);
+            if (!anchors.TryGetValue(key, out raw) || image == null ||
+                !CameraImageGeometry.TryWebcamViewport(raw, image.uvRect, imageRT, markers, out position)) return false;
             return position.x >= 0 && position.x <= 1 && position.y >= 0 && position.y <= 1;
         }
 
@@ -225,18 +224,6 @@ namespace InstallerAssistant.AR
         // ================================================================== webcam
 
         bool Ready { get { return cam != null && cam.isPlaying && cam.width > 32 && cam.height > 32; } }
-
-        /// <summary>Raw image point (x right, y down) to the displayed, rotated image (x right, y down).</summary>
-        Vector2 ToDisplay(Vector2 p)
-        {
-            switch (rotation)
-            {
-                case 90: return new Vector2(1f - p.y, p.x);
-                case 180: return new Vector2(1f - p.x, 1f - p.y);
-                case 270: return new Vector2(p.y, 1f - p.x);
-                default: return p;
-            }
-        }
 
         void StartCamera()
         {

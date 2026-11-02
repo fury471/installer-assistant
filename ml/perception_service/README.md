@@ -1,5 +1,8 @@
 # Perception service – JSON contract
 
+> **Current bench hardware — 2 Nov 2026 (confirmed by Xiaoxin): AXIS A1610 controller + A4020-E reader.** Keep `A1610.READER1` / `A1610.READER2` label and record IDs. Earlier A1601 bench measurements and the `A1610_A1601.jpg` reference variant retain their original provenance; they are not new A1610 results. Collect a separate batch after the hardware change.
+
+
 Mirrors `unity/InstallerAssistant/Assets/_Project/Scripts/Detection/PerceptionClient.cs` and `schemas.py`. Change all three together.
 
 Positions are normalised to the image: `x` 0 (left) to 1 (right), `y` 0 (top) to 1 (bottom).
@@ -79,6 +82,32 @@ The LightGlue model (50 MB) stays out of Git and is downloaded with its checksum
 shared through Git so everyone debugs with the same model; they load only with the scikit-learn version pinned in
 `ml/requirements.txt` (a warning says so otherwise). Without a pin reader model the service still runs and uses the
 old colour baseline there (it prints a warning).
+
+The A4020-E also has four small `templates/A4020E_block_*.png` housing references for local positioning. These
+are not classifier weights or replacements for the wire model's empty reference. Only the four manually annotated
+all-empty R01 photos of session3 generated them; provenance/hashes are in `A4020E_block_references.json`.
+To reproduce with that local dataset: `python -m ml.tools.calibrate_reader_block --session session3 --row R01`.
+`build_patches` and `eval_locate` now use the same local refinement as the service. Keep wired rows out of reference
+generation, evaluate against manual coordinates, and restart the service after changing local references.
+
+For a merged candidate without replacing the active model:
+`python -m ml.eval.train_pins --sessions session1 session3 --workers 4 --no-checks --out ml/models/pins_candidate.joblib`.
+The ordinary grouped cross-validation still runs once; `--no-checks` skips only the extra domain checks. Per-session
+metrics are included in `ml/runs/train_pins.json`. Review black-wire misses and empty-slot false positives separately
+before replacing `pins.joblib`; aggregate accuracy alone can hide a regression in one of them.
+
+Reader reference/comparison candidates can use `--reference-mode housing-aligned`. `build_patches` records the
+housing-selected `reference_index` beside each pin; training and the service use its paired empty pin windows.
+This mode uses one shared reference translation on A4020-E windows, preserving thin black-wire differences;
+controller features keep the original comparison. Model metadata controls the mode, so existing models retain
+their original input contract. Four tiny `A4020E_empty_*.png` grids are generated with the housing calibration
+tool from the same four empty photos. Exclude those four calibration photos when reporting new-batch validation.
+
+The active 2 Nov reader model uses `housing-anchored`: paired empty views and shared alignment, plus foreground
+colour sampling connected to the current entry rather than the strongest centre-band change. Reader presence
+features inspect the entry and first half pin pitch so a bent wire may leave the crop sideways. Controller
+feature extraction is unchanged. Reproduce a candidate with `--reference-mode housing-anchored`; do not load
+its weights into older service code that lacks this mode. Models without mode metadata still use legacy inputs.
 
 ## Saving live frames (bench days)
 

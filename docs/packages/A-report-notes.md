@@ -1,5 +1,8 @@
 # Package A · notes for the report
 
+> **Current bench hardware — 2 Nov 2026 (confirmed by Xiaoxin): AXIS A1610 controller + A4020-E reader.** Keep `A1610.READER1` / `A1610.READER2` label and record IDs. Earlier A1601 bench measurements and the `A1610_A1601.jpg` reference variant retain their original provenance; they are not new A1610 results. Collect a separate batch after the hardware change.
+
+
 Yu · kept up to date as the work goes on. Everything the Perception section of the course report needs: what was
 built, why, how it was measured, the numbers, and what went wrong. The day-by-day record is `ml/LOG.md`; this file
 is the summary to write the report from. References are given by their key in `docs/references.bib`
