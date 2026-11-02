@@ -19,20 +19,20 @@ namespace InstallerAssistant.AR
     /// CPU images the readers get), ARCameraBackground (draws the feed behind the UI), a TrackedPoseDriver (the phone's
     /// pose), ARRaycastManager, ARPlaneManager and ARPointCloudManager (to put anchors on real surfaces).
     ///
-    /// Frames   the latest CPU image converted to RGBA32 in Unity's bottom-up order (MirrorY), the camera
+    /// Frames   the latest CPU image converted to RGBA32 in Unity's bottom-up order (MirrorX), the camera
     ///          configuration with the largest image up to maxImageWidth (the service works at 1920), auto-focus on.
     ///          For each frame handed out, the camera pose, projection and display matrix of that moment are kept,
     ///          because a reading comes back 1 to 3 s later, when the phone has moved.
-    /// Anchor   image point -> the screen point it was drawn at in that frame (inverse of the display matrix, as
-    ///          the ARCore background shader applies it: texture = (viewport x, viewport y, 1) * M) -> a ray from the
-    ///          camera pose of that frame -> raycast against planes and feature points -> a world point. Without a hit
-    ///          yet, the point is put on the ray at the depth of another pin of the same frame (or 30 cm) and the
-    ///          raycast is tried again every frame for 10 s, as ARCore finds the surface.
+    /// Anchor   image point -> inverse of the background shader's display transform -> viewport -> inverse projection
+    ///          from the camera pose of that frame -> raycast against planes and
+    ///          feature points -> a world point. Without a hit yet, the point is put on the ray at the depth of
+    ///          another pin of the same frame (or 30 cm) and the raycast is tried again every frame for 10 s, as
+    ///          ARCore finds the surface.
     /// Position every frame the world point projected with the camera of now: marks stay on the pins while the
     ///          phone moves.
-    /// Image y is mirrored onto the texture (Orientation = 2, from the K80S screenshots of 1 Nov). On the phone the
-    /// number shows after each read and a three-finger tap cycles the four orientations and places the marks again;
-    /// ArCameraView's arFlipImageX / arFlipImageY mirror an axis permanently.
+    /// The display matrix includes the sensor-to-display rotation, crop and texture y flip. Sensor intrinsics alone
+    /// do not: applying them to the portrait camera pose turned the reader and controller marks by 90 degrees.
+    /// MirrorX reverses rows for Unity's bottom-up texture storage; MirrorY reverses columns and is not that conversion.
     /// </summary>
     public sealed class ArRig
     {
@@ -41,7 +41,12 @@ namespace InstallerAssistant.AR
         const int KeepFrames = 40;
         const TrackableType Surfaces = TrackableType.PlaneWithinPolygon | TrackableType.PlaneEstimated | TrackableType.FeaturePoint;
 
-        struct FrameView { public Matrix4x4 CameraToWorld, Projection, Display; public bool HasDisplay; public int W, H; public float Fx; }
+        struct FrameView
+        {
+            public Matrix4x4 CameraToWorld, Projection, Display;
+            public bool HasDisplay;
+            public int W, H;
+        }
 
         sealed class Anchored
         {
@@ -50,21 +55,9 @@ namespace InstallerAssistant.AR
             public long Frame;
             public bool Estimated;
             public float Since;
-            public ImagePoint Where;                      // kept so a change of orientation can place it again
             public FrameView View;
             public string Key;
         }
-
-        /// <summary>
-        /// How image points map onto the camera texture: bit 0 mirrors x, bit 1 mirrors y. On the K80S: 0 put the marks
-        /// across the screen from the pins; 3 (both axes) put them in reverse order along the block (1 Nov, 00:22: the
-        /// amber "-" mark on top, the "-" pin at the bottom; moving the phone cannot reverse marks on one line); 2 (y only)
-        /// is the one left that fits both. The current number is shown after every read; a three-finger tap cycles 0..3
-        /// on the phone and places every mark again.
-        /// </summary>
-        public static int Orientation = 2;
-        float orientationShownUntil;
-        bool threeFingersDown;
 
         readonly ArCameraView owner;
         readonly Camera cam;
@@ -77,6 +70,8 @@ namespace InstallerAssistant.AR
         readonly Dictionary<string, Anchored> anchors = new Dictionary<string, Anchored>();
         Matrix4x4 display = Matrix4x4.identity;
         bool hasDisplay, configured;
+        long loggedAnchorFrame = -1;
+        Matrix4x4 projection;
 
         /// <summary>Builds the AR rig around the Main Camera, or returns null (and logs why) if it cannot.</summary>
         public static ArRig Create(ArCameraView owner)
@@ -139,8 +134,6 @@ namespace InstallerAssistant.AR
         {
             get
             {
-                if (Time.unscaledTime < orientationShownUntil)
-                    return "Mark orientation " + Orientation + " (three-finger tap: next)";
                 switch (ARSession.state)
                 {
                     case ARSessionState.SessionTracking: return "";
@@ -161,6 +154,7 @@ namespace InstallerAssistant.AR
         void OnFrame(ARCameraFrameEventArgs e)
         {
             if (e.displayMatrix.HasValue) { display = e.displayMatrix.Value; hasDisplay = true; }
+            if (e.projectionMatrix.HasValue) projection = e.projectionMatrix.Value;
             if (!configured && ARSession.state >= ARSessionState.SessionInitializing) { configured = true; ChooseConfiguration(); }
         }
 
@@ -196,7 +190,9 @@ namespace InstallerAssistant.AR
             if (cameraManager == null || !cameraManager.TryAcquireLatestCpuImage(out image)) return f;
             try
             {
-                var conversion = new XRCpuImage.ConversionParams(image, TextureFormat.RGBA32, XRCpuImage.Transformation.MirrorY);
+                // MirrorX reverses rows. The resulting Texture2D/JPEG has the native CPU image's orientation;
+                // MirrorY flips columns instead and would rotate the JPEG 180 degrees after bottom-up decoding.
+                var conversion = new XRCpuImage.ConversionParams(image, TextureFormat.RGBA32, XRCpuImage.Transformation.MirrorX);
                 int size = image.GetConvertedDataSize(conversion);
                 var pixels = new byte[size];             // a new array per frame: readers keep frames while they work
                 var pin = GCHandle.Alloc(pixels, GCHandleType.Pinned);
@@ -213,12 +209,22 @@ namespace InstallerAssistant.AR
 
             XRCameraIntrinsics k;
             if (cameraManager.TryGetIntrinsics(out k))
-                f.Intrinsics = new[] { k.focalLength.x, k.focalLength.y, k.principalPoint.x, k.principalPoint.y };
+            {
+                // the intrinsics belong to the camera image they were measured on; ARCore may report them for the
+                // full resolution while the CPU image we hand out is smaller, so scale them to that image
+                float sx = k.resolution.x > 0 ? f.Width / (float)k.resolution.x : 1f;
+                float sy = k.resolution.y > 0 ? f.Height / (float)k.resolution.y : 1f;
+                f.Intrinsics = new[]
+                {
+                    k.focalLength.x * sx, k.focalLength.y * sy,
+                    k.principalPoint.x * sx, k.principalPoint.y * sy,
+                };
+            }
             var m = cam.transform.localToWorldMatrix;
             f.Pose = new float[16];
             for (int i = 0; i < 16; i++) f.Pose[i] = m[i];          // Matrix4x4[i] is column-major
-            Remember(id, new FrameView { CameraToWorld = cam.cameraToWorldMatrix, Projection = cam.projectionMatrix, Display = display,
-                                         HasDisplay = hasDisplay, W = f.Width, H = f.Height, Fx = f.Intrinsics != null ? f.Intrinsics[0] : 0f });
+            Remember(id, new FrameView { CameraToWorld = cam.cameraToWorldMatrix, Projection = projection, Display = display,
+                                         HasDisplay = hasDisplay, W = f.Width, H = f.Height });
             return f;
         }
 
@@ -240,16 +246,23 @@ namespace InstallerAssistant.AR
         {
             FrameView v;
             if (!where.Valid || frame == null || !frames.TryGetValue(frame.Id, out v) || !v.HasDisplay) return;
-            var a = new Anchored { Ray = RayOf(where, v), Frame = frame.Id, Since = Time.unscaledTime, Where = where, View = v, Key = key };
+            Ray ray;
+            if (!TryRay(where, v, out ray)) { anchors.Remove(key); return; }
+            var a = new Anchored { Ray = ray, Frame = frame.Id, Since = Time.unscaledTime, View = v, Key = key };
             anchors[key] = a;
             if (!DepthFromSpacing(frame.Id)) Place(a);      // a single point (the label): raycast, or 30 cm
             else Refit(frame.Id);
-            orientationShownUntil = Time.unscaledTime + 4f; // show which orientation placed these marks
+            if (Debug.isDebugBuild && loggedAnchorFrame != frame.Id)
+            {
+                loggedAnchorFrame = frame.Id;
+                Debug.Log("[ArRig] anchor frame=" + frame.Id + " image=" + v.W + "x" + v.H +
+                    " rows=MirrorX display=" + v.Display.ToString("F5") + " projection=" + v.Projection.ToString("F5"));
+            }
         }
 
         /// <summary>
-        /// The depth of a frame's pins from how far apart they look: depth = focal length (px) x pin spacing (m) /
-        /// spacing in the image (px), the pinhole model. The spacing is known for each device (5.0 mm on the A1610 /
+        /// The depth of a frame's pins from how far apart their rays lie on the unit camera plane:
+        /// depth = pin spacing (m) / ray spacing. The spacing is known for each device (5.0 mm on the A1610 /
         /// A1601 blocks, 5.8 mm on the A4020-E; measured on session-1 photos against the 21.5 mm QR labels), so no
         /// surface has to be found first: on 1 Nov the raycasts missed the board and marks were left over the floor.
         /// </summary>
@@ -259,25 +272,29 @@ namespace InstallerAssistant.AR
             foreach (var a in anchors.Values) if (a.Frame == frame && !a.Key.StartsWith("module:") && a.Key != "label") pts.Add(a);
             if (pts.Count < 2) return false;
             var v = pts[0].View;
-            if (v.Fx <= 0 || v.W <= 0) return false;
             var gaps = new List<float>();
+            Vector3 forward = -((Vector3)v.CameraToWorld.GetColumn(2)).normalized;
+            Vector3 right = v.CameraToWorld.GetColumn(0), up = v.CameraToWorld.GetColumn(1);
             foreach (var a in pts)
             {
                 float best = float.MaxValue;
                 foreach (var b in pts)
                 {
                     if (a == b) continue;
-                    float d = Vector2.Distance(new Vector2(a.Where.X * v.W, a.Where.Y * v.H), new Vector2(b.Where.X * v.W, b.Where.Y * v.H));
-                    if (d > 1f && d < best) best = d;
+                    // Compare rays in camera-plane units. This already includes rotation/crop and both focal axes.
+                    Vector3 ra = a.Ray.direction / Vector3.Dot(a.Ray.direction, forward);
+                    Vector3 rb = b.Ray.direction / Vector3.Dot(b.Ray.direction, forward);
+                    Vector3 delta = ra - rb;
+                    float d = new Vector2(Vector3.Dot(delta, right), Vector3.Dot(delta, up)).magnitude;
+                    if (d > 1e-6f && d < best) best = d;
                 }
                 if (best < float.MaxValue) gaps.Add(best);
             }
             if (gaps.Count == 0) return false;
             gaps.Sort();
-            float spacingPx = gaps[gaps.Count / 2];
+            float spacing = gaps[gaps.Count / 2];
             float pitch = (pts[0].Key.StartsWith("pin:") ? owner.arControllerPinSpacingMm : owner.arDevicePinSpacingMm) / 1000f;
-            float z = v.Fx * pitch / spacingPx;                   // along the camera's forward axis
-            Vector3 forward = -((Vector3)v.CameraToWorld.GetColumn(2)).normalized;   // camera space looks down -z
+            float z = pitch / spacing;                           // along the camera's forward axis
             foreach (var a in anchors.Values)
             {
                 if (a.Frame != frame) continue;
@@ -312,25 +329,6 @@ namespace InstallerAssistant.AR
             }
         }
 
-        /// <summary>Three fingers on the screen: the next orientation, and every mark placed again with it.</summary>
-        void CheckOrientationGesture()
-        {
-            var screen = Touchscreen.current;
-            int down = 0;
-            if (screen != null) foreach (var t in screen.touches) if (t.press.isPressed) down++;
-            bool now = down >= 3;
-            if (now && !threeFingersDown)
-            {
-                Orientation = (Orientation + 1) % 4;
-                orientationShownUntil = Time.unscaledTime + 3f;
-                Debug.Log("[ArRig] mark orientation " + Orientation);
-                var redo = new HashSet<long>();
-                foreach (var a in anchors.Values) { a.Ray = RayOf(a.Where, a.View); redo.Add(a.Frame); }
-                foreach (var f in redo) if (!DepthFromSpacing(f)) foreach (var a in anchors.Values) if (a.Frame == f) Place(a);
-            }
-            threeFingersDown = now;
-        }
-
         public void Clear() { anchors.Clear(); }
 
         public bool TryGetPosition(string key, out Vector2 position)
@@ -347,7 +345,6 @@ namespace InstallerAssistant.AR
         /// <summary>Called every frame: anchors still without a surface try the raycast again.</summary>
         public void Tick()
         {
-            CheckOrientationGesture();
             float now = Time.unscaledTime;
             List<long> found = null;
             foreach (var a in anchors.Values)
@@ -387,26 +384,18 @@ namespace InstallerAssistant.AR
         }
 
         /// <summary>
-        /// The ray through an image point of a frame. Image (x right, y down, 0..1) = texture coordinates of the camera
-        /// feed; the display matrix maps the screen's viewport point to them, texture = (vx, vy, 1) * M as in the
-        /// ARCore background shader, so the viewport point is that relation solved backwards.
+        /// Use the display and projection matrices saved with the read frame, not the phone's pose after the
+        /// service returns. Invalid transforms hide the mark rather than guessing an identity orientation.
         /// </summary>
-        Ray RayOf(ImagePoint p, FrameView v)
+        bool TryRay(ImagePoint p, FrameView v, out Ray ray)
         {
-            // Orientation (see above) and the view's two flags mirror the image axes
-            bool mx = ((Orientation & 1) != 0) ^ owner.arFlipImageX, my = ((Orientation & 2) != 0) ^ owner.arFlipImageY;
-            float tx = mx ? 1f - p.X : p.X;
-            float ty = my ? 1f - p.Y : p.Y;
-            var m = v.Display;
-            float a = m.m00, b = m.m10, c = m.m01, d = m.m11;     // tx = a vx + b vy + m20, ty = c vx + d vy + m21
-            float det = a * d - b * c;
-            if (Mathf.Abs(det) < 1e-6f) { a = 1; b = 0; c = 0; d = 1; det = 1; }
-            float rx = tx - m.m20, ry = ty - m.m21;
-            float vx = (d * rx - b * ry) / det, vy = (-c * rx + a * ry) / det;
-            Vector4 q = v.Projection.inverse * new Vector4(2f * vx - 1f, 2f * vy - 1f, 1f, 1f);
-            var inCamera = new Vector3(q.x, q.y, q.z) / q.w;      // a point on the far plane, camera space
-            var origin = v.CameraToWorld.MultiplyPoint(Vector3.zero);
-            return new Ray(origin, v.CameraToWorld.MultiplyVector(inCamera).normalized);
+            ray = default;
+            Vector3 direction;
+            Vector2 image = new Vector2(owner.arFlipImageX ? 1f - p.X : p.X, owner.arFlipImageY ? 1f - p.Y : p.Y);
+            if (!CameraImageGeometry.TryCameraRay(image, v.Display, v.Projection, out direction)) return false;
+            ray = new Ray(v.CameraToWorld.MultiplyPoint(Vector3.zero), v.CameraToWorld.MultiplyVector(direction).normalized);
+            return true;
         }
+
     }
 }
