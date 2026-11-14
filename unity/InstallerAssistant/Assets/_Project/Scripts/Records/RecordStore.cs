@@ -17,6 +17,8 @@ namespace InstallerAssistant.Records
         void Save(ControllerRecord controllerEnd);
         bool TryGet(string cableKey, out CableRecord deviceEnd);
         bool TryGet(string cableKey, out ControllerRecord controllerEnd);
+        /// <summary>Starts this cable again without changing other cables' saved ends.</summary>
+        void Forget(string cableKey);
         /// <summary>Forgets every record (a fresh site visit).</summary>
         void Clear();
     }
@@ -29,6 +31,7 @@ namespace InstallerAssistant.Records
         public void Save(ControllerRecord controllerEnd) { controllers[controllerEnd.Label.Key] = controllerEnd; }
         public bool TryGet(string cableKey, out CableRecord deviceEnd) { return devices.TryGetValue(cableKey, out deviceEnd); }
         public bool TryGet(string cableKey, out ControllerRecord controllerEnd) { return controllers.TryGetValue(cableKey, out controllerEnd); }
+        public void Forget(string cableKey) { devices.Remove(cableKey); controllers.Remove(cableKey); }
         public void Clear() { devices.Clear(); controllers.Clear(); }
     }
 

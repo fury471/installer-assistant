@@ -194,6 +194,18 @@ static class T
         store.Save(cr);
         ControllerRecord back; CableRecord none;
         Eq(store.TryGet(dev.Key, out back) && !store.TryGet(dev.Key, out none), true, "store keeps the controller end under the cable key");
+        store.Save(Rec(O, K, G, Y));
+        CableLabel otherLabel;
+        CableLabel.TryParse("IA|C02|D2|A1610.READER2|A4020E|DEV", out otherLabel);
+        var otherRecord = new CableRecord(otherLabel, AxisCatalog.OsdpReaderOnReader2, new[] { O,K,G,Y }, new bool[4], DateTime.Now);
+        store.Save(otherRecord);
+        store.Forget(dev.Key);
+        Eq(!store.TryGet(dev.Key, out back) && !store.TryGet(dev.Key, out none), true,
+            "starting a cable again removes both old ends");
+        Eq(store.TryGet(otherLabel.Key, out none) && ReferenceEquals(none, otherRecord), true,
+            "starting one cable again preserves another cable's saved end");
+        store.Forget(dev.Key);
+        Eq(store.TryGet(otherLabel.Key, out none), true, "forgetting a missing cable is safe");
         store.Clear();
         Eq(store.TryGet(dev.Key, out back), false, "a fresh site visit clears the store");
         CableLabel door2;

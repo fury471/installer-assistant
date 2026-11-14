@@ -59,6 +59,12 @@ namespace InstallerAssistant.Records
         public void Save(ControllerRecord controllerEnd) { controllers[controllerEnd.Label.Key] = controllerEnd; Write(); }
         public bool TryGet(string cableKey, out CableRecord deviceEnd) { return devices.TryGetValue(cableKey, out deviceEnd); }
         public bool TryGet(string cableKey, out ControllerRecord controllerEnd) { return controllers.TryGetValue(cableKey, out controllerEnd); }
+        public void Forget(string cableKey)
+        {
+            devices.Remove(cableKey);
+            controllers.Remove(cableKey);
+            Write();
+        }
 
         public void Clear()
         {

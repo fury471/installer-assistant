@@ -34,7 +34,7 @@ The `App` folder does not reference the `WizardOfOz` folder: the rig plugs in th
 ## How a check runs
 
 1. **Scan a label.** The app doesn't know the cable or the end yet. It asks the camera view for frames and the label scanner for the label. The label is the cable's plan, `IA|C01|D1|A1610.READER2|A4020E|CTRL`: cable id, door, the controller module and the device module it connects, and the end this label sits on. `AxisCatalog.Resolve` binds the wiring rule to the module the label names (here Reader 2); a label the catalogue can't resolve is refused with a reason. Each wiring rule is extracted from the manuals for one use case; the MVP has one (an OSDP reader on a reader port). If the label has no end, the app asks once which end this is.
-2. **Load what is known.** Records for that key come from the record store, so the other end may have been saved on another day.
+2. **Load what is known.** Records for that key come from the record store, so the other end may have been saved on another day. A cable with a completed pair starts a fresh check at end 1: `IRecordStore.Forget(key)` removes only that cable's old pairing readings. Existing report objects keep their original readings and snapshots; other cables' saved ends remain available. Pairing within a check uses that check's accepted readings.
 3. **First end.** The wire reader reads the end, the installer confirms (one tap, or a tap on an amber wire), and the end is saved. The view keeps a snapshot of it. At the controller, the zone check runs first (step 5); at either end, the bundle check runs before the wires can be saved.
 4. **Walk.** The app says where the other end is (from the label and the wiring rule). "Finish later" keeps the cable waiting on Home.
 5. **Second end.** The label must pair (same key and plan, other end); two labels of one cable with different plans are flagged as a misprint. At the controller, the **zone check** comes first: the wire reader also surveys the controller's other modules (`ControllerReading.OtherModules`), and if the planned module is empty while another holds wires, the app says "Move the cable to Reader 2" (or asks "Is this cable on Reader 1?") and marks both modules in the camera view; "Not this cable" dismisses it. Next, the **bundle check**: the wire reader, given the scanned label, follows each wire back and says whether it reaches this label, another cable's label or cannot tell (`Traces` in the readings); a wire of another cable is marked red ("other cable") and named before any pin is judged, and "They are this cable's" dismisses it. Then the rule check runs, the second opinion runs in parallel, and the verdict table combines them.
@@ -75,6 +75,17 @@ The contracts are frozen: change one only with a pull request all three approve.
 | `Labels/CableLabel.cs` | the label format: cable id, door, controller module, device module, end |
 | `Detection/IWireReader.cs` | given the rule and the scanned label: colour, confidence, position and trace (where the wire runs back to) per terminal or pin; at the controller also the other modules (zone survey) |
 | `AI/ISecondOpinion.cs` | match / mismatch / unknown per pin, from both frames, independent of layer 1 |
-| `Records/RecordStore.cs` (`IRecordStore`) | both ends per cable key |
+| `Records/RecordStore.cs` (`IRecordStore`) | save/get both ends per cable key; `Forget(key)` resets one cable's pairing readings; `Clear()` resets the whole store |
 | `App/Services.cs` | `ServiceSet`, `OverlayStyle`, `IServiceSource`, `IStudyOperator` |
 | `ml/perception_service/schemas.py` ⇄ `Detection/PerceptionClient.cs` | the HTTP/JSON contract of the service |
+
+### Record-store refinement, 14 Nov 2026
+
+`IRecordStore.Forget(string cableKey)` resets a completed cable before a fresh check: remove both end readings for that key,
+leave every other cable intact, and do nothing if the key is absent. The JSON implementation persists the
+removal; the in-memory Wizard-of-Oz implementation has the same semantics. `Clear()` cannot substitute for
+this operation because it discards unfinished work on other cables.
+
+AR recovery remains behind `ICameraView`; app flow and persistence remain in package C. No camera, perception,
+label or verdict contract changes are required. The record-store addition follows the normal separate
+contract-review and merge rules.
