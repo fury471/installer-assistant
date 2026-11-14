@@ -327,10 +327,7 @@ namespace InstallerAssistant.App
                     end = clicked == "ctrl" ? CableEnd.Controller : CableEnd.Device;
                 }
 
-                cable = label.AtEnd(end);
-                current = CableFor(cable);
-                records.TryGet(cable.Key, out record);
-                records.TryGet(cable.Key, out ctrlRecord);
+                SelectCableForCheck(label.AtEnd(end), pairWith != null);
                 if (qrCaption != null) qrCaption.text = cable.Display;
                 ShowLabelBox(scan, frame);
                 yield return Wait(0.25f);
@@ -341,6 +338,31 @@ namespace InstallerAssistant.App
                 labelBoxOn = false;
                 done(end);
                 yield break;
+            }
+        }
+
+        // A completed pair is evidence for its report, not the first end of a new check.
+        // Pairing within this check keeps only the readings already accepted by this flow.
+        void SelectCableForCheck(CableLabel label, bool pairing)
+        {
+            cable = label;
+            if (pairing) return;
+            current = CableFor(cable);
+            records.TryGet(cable.Key, out record);
+            records.TryGet(cable.Key, out ctrlRecord);
+            if (current.State == CableState.OneEnd)
+            {
+                if (current.FirstEnd == CableEnd.Controller) record = null;
+                else ctrlRecord = null;
+            }
+            else if (current.State == CableState.Verified || (record != null && ctrlRecord != null))
+            {
+                // Keep the old Cable object (and its snapshots) intact for existing reports.
+                records.Forget(cable.Key);
+                cables.Remove(cable.Key);
+                current = CableFor(cable);
+                record = null;
+                ctrlRecord = null;
             }
         }
 
@@ -469,11 +491,21 @@ namespace InstallerAssistant.App
             int[] colours = null; float[] conf = null; ImagePoint[] where = null;
             ControllerReading crd = null;
             DeviceEndReading drd = null;
-            var frame = view.Latest;
+            CameraFrame frame = null;
             scanLine.gameObject.SetActive(true);
-            if (atController) StartCoroutine(wires.ReadControllerEnd(rule, cable, frame, r => { crd = r; where = r.Positions; conf = r.Confidence; colours = r.Colours; }));
-            else StartCoroutine(wires.ReadDeviceEnd(rule, cable, frame, r => { drd = r; where = r.Positions; conf = r.Confidence; colours = r.Colours; }));
-            yield return ProgressUntil(bar, () => colours != null, 2.4f);
+            // a live camera: the sharpest frame of a short burst, and when the reader finds nothing in it (the phone
+            // was still moving, the block was half out of view) two more tries before the installer is asked
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                colours = null; conf = null; where = null; crd = null; drd = null;
+                yield return SharpFrame(f => frame = f);
+                if (atController) StartCoroutine(wires.ReadControllerEnd(rule, cable, frame, r => { crd = r; where = r.Positions; conf = r.Confidence; colours = r.Colours; }));
+                else StartCoroutine(wires.ReadDeviceEnd(rule, cable, frame, r => { drd = r; where = r.Positions; conf = r.Confidence; colours = r.Colours; }));
+                yield return ProgressUntil(attempt == 0 ? bar : null, () => colours != null, 2.4f);
+                if (!LiveFrame(frame) || AnyFound(where)) break;
+                log.Add("read_retry", "frame=" + frame.Id + "; attempt=" + (attempt + 1));
+                if (attempt < 2) Instruction("Hold the phone still, 30 to 45 cm from the " + (atController ? "block" : "terminals"), Warn);
+            }
             scanLine.gameObject.SetActive(false);
 
             int n = marks.Count;
@@ -502,15 +534,102 @@ namespace InstallerAssistant.App
             if (BundleOpen()) MarkForeign(readColours);
         }
 
+        static bool AnyFound(ImagePoint[] where)
+        {
+            if (where != null) foreach (var p in where) if (p.Valid) return true;
+            return false;
+        }
+
+        /// <summary>A frame of a live camera (pixels the app can measure), not a photo of the Wizard of Oz or a test frame.</summary>
+        static bool LiveFrame(CameraFrame frame)
+        {
+            return frame != null && frame.Format == FramePixels.Rgba32 && frame.Pixels != null;
+        }
+
+        /// <summary>
+        /// The frame to read: with a live camera the sharpest of a short burst (FrameQuality), because the frame of
+        /// the moment the installer tapped is often smeared by the tap itself. Other views (the Wizard of Oz's
+        /// photos) give their frame at once, as before.
+        /// </summary>
+        IEnumerator SharpFrame(Action<CameraFrame> got)
+        {
+            var best = view.Latest;
+            if (!LiveFrame(best) || burstFrames <= 1) { got(best); yield break; }
+            double sharpest = FrameQuality.Sharpness(best);
+            float gap = Mathf.Max(0.02f, burstSeconds / Mathf.Max(1, burstFrames - 1));
+            for (int i = 1; i < burstFrames; i++)
+            {
+                yield return new WaitForSecondsRealtime(gap);
+                if (view == null) break;
+                var next = view.Latest;
+                if (!LiveFrame(next)) continue;
+                double sharp = FrameQuality.Sharpness(next);
+                if (sharp > sharpest) { sharpest = sharp; best = next; }
+            }
+            got(best);
+        }
+
         /// <summary>
         /// Tells the camera view where the reader found each terminal (index = terminal for the device end, pin - 1
-        /// for the controller), in the frame it read. The view keeps them on the terminals from then on.
+        /// for the controller), in the frame it read. The view keeps them on the terminals from then on. An
+        /// explicit read starts the marks afresh (a terminal this read did not find is hidden, never left where an
+        /// older read put it); the quiet re-reads of KeepMarksAligned add views to them instead.
         /// </summary>
         void AnchorMarks(CableEnd end, ImagePoint[] where, CameraFrame frame)
         {
+            anchorEpoch++;
+            view.ClearAnchors();
             if (where == null) return;
             for (int i = 0; i < marks.Count && i < where.Length; i++)
                 if (where[i].Valid) view.Anchor(CameraKeys.Of(end, i), where[i], frame);
+        }
+
+        // ------------------------------------------------------------------ keeping the marks on the pins (live AR)
+
+        int anchorEpoch;            // changes with every explicit read: a quiet re-read started before it is dropped
+        bool waitingForInstaller;   // the flow waits for a tap: no explicit read is running, the marks are shown
+        Coroutine alignCo;
+
+        /// <summary>
+        /// While the marks are shown and the installer is looking (not during an explicit read or a dialog), reads
+        /// the same end again every few seconds and hands only the positions to the camera view, so the marks stay on
+        /// the terminals. The AR view triangulates each pin from these views (ArRig, AnchorFusion); the webcam view
+        /// follows the picture between reads and takes each read as the new truth (PlaneTracker). When the view has
+        /// lost the marks (it hides them rather than guess), the next read is retried sooner. Colours, verdicts and the
+        /// session log are not touched. Live cameras only: a photo does not move.
+        /// </summary>
+        IEnumerator KeepMarksAligned()
+        {
+            float last = Time.unscaledTime;
+            while (true)
+            {
+                yield return new WaitForSecondsRealtime(0.4f);
+                if (!keepMarksAligned || IsWizardOfOz || camRoot == null || view == null || !waitingForInstaller || modalOpen ||
+                    rule == null || cable == null || wires == null) continue;
+                bool missing = false, wanted = false;
+                foreach (var m in marks)
+                    if (m.State != Mark.Hidden) { wanted = true; if (!m.Known) missing = true; }
+                if (!wanted) continue;
+                if (Time.unscaledTime - last < (missing ? 1f : Mathf.Max(1f, alignEverySeconds))) continue;
+                var end = marksEnd;
+                int epoch = anchorEpoch;
+                var frame = view.Latest;
+                if (!LiveFrame(frame)) continue;
+                last = Time.unscaledTime;
+                ImagePoint[] where = null;
+                bool done = false;
+                var request = StartCoroutine(end == CableEnd.Controller
+                    ? wires.ReadControllerEnd(rule, cable, frame, r => { where = r != null ? r.Positions : null; done = true; })
+                    : wires.ReadDeviceEnd(rule, cable, frame, r => { where = r != null ? r.Positions : null; done = true; }));
+                float giveUp = Time.unscaledTime + 8f;
+                while (!done && Time.unscaledTime < giveUp && epoch == anchorEpoch && end == marksEnd &&
+                    camRoot != null && waitingForInstaller && !modalOpen) yield return null;
+                if (!done) StopCoroutine(request); // no overlapping old requests after a stall or end change
+                if (!done || where == null || epoch != anchorEpoch || end != marksEnd || camRoot == null ||
+                    !waitingForInstaller || modalOpen) continue;
+                for (int i = 0; i < marks.Count && i < where.Length; i++)
+                    if (where[i].Valid) view.Anchor(CameraKeys.Of(end, i), where[i], frame);
+            }
         }
 
         /// <summary>
@@ -733,8 +852,9 @@ namespace InstallerAssistant.App
             var bar = ProgressLine(ReadingWhat());
             Instruction("Hold steady", Accent);
             ControllerReading rd = null;
-            var frame = view.Latest;
+            CameraFrame frame = null;
             scanLine.gameObject.SetActive(true);
+            yield return SharpFrame(f => frame = f);
             StartCoroutine(wires.ReadControllerEnd(rule, cable, frame, r => rd = r));
             yield return ProgressUntil(bar, () => rd != null, 2.2f);
             scanLine.gameObject.SetActive(false);
@@ -796,8 +916,9 @@ namespace InstallerAssistant.App
 
             ControllerReading rd = null;
             Opinion[] ops = null;
-            var frame = view.Latest;
+            CameraFrame frame = null;
             scanLine.gameObject.SetActive(true);
+            yield return SharpFrame(f => frame = f);
             StartCoroutine(wires.ReadControllerEnd(rule, cable, frame, r => rd = r));
             if (useSecondOpinion)
             {
@@ -1333,6 +1454,9 @@ namespace InstallerAssistant.App
 
             // the camera view (a photo in the Wizard of Oz, the AR camera live) and the layer anchored on it
             markersRT = view.Attach(camRoot);
+            waitingForInstaller = false;
+            if (alignCo != null) StopCoroutine(alignCo);
+            alignCo = StartCoroutine(KeepMarksAligned());
             if (view.SeeThrough) canvasBackground.enabled = false;   // the AR camera is drawn behind the UI
 
             var top = Img("TopShade", camRoot, sFadeDown, Hex("#000000", 0.35f), 0);
@@ -1675,7 +1799,9 @@ namespace InstallerAssistant.App
         IEnumerator WaitClickOrTap()
         {
             clicked = null; tapped = null;
+            waitingForInstaller = true;
             while ((clicked == null || clicked == "dismiss") && tapped == null) yield return null;
+            waitingForInstaller = false;
         }
 
         // ================================================================== zone check
@@ -1822,6 +1948,7 @@ namespace InstallerAssistant.App
 
         void ClearMarks()
         {
+            anchorEpoch++; // an in-flight alignment read belongs to the end we are leaving
             foreach (var m in marks) if (m.Root != null) Destroy(m.Root.gameObject);
             marks.Clear();
         }

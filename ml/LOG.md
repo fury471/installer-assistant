@@ -381,3 +381,144 @@
   plus/red, minus/black, A/green, B/yellow. Flash yellow is still low confidence (0.482) and needs confirmation.
   Existing APK works; fresh device scans with supplement light off/on are the next practical verification.
 
+
+## 2026-11-14 · AR marks: triangulated from several reads, intrinsics rays, AR records (Yu, covering B and C)
+
+**Why.** After the 2 Nov alignment fix the marks were still "not good enough", and the phone kept no record of
+what it showed. Reading the code: every read gave the whole block **one depth from its pin spacing**, which is
+exact only when the block faces the camera. The spacing shrinks with the cosine of the tilt, so the depth is long
+by 1/cos − 1 (35°: 22 %, ~8 cm at 35 cm), and the marks slide off the pins as soon as the phone moves (Chen's 2 Nov
+note: "steep views need separate testing"). The image → ray step also took the CPU image for the screen texture;
+ARCore's CPU image may cover a different field of view than that texture.
+
+**What changed (no contract file touched; `ICameraView`, `CameraFrame`, `IWireReader`, the HTTP schema are as they were).**
+- `AR/AnchorFusion.cs` (new): each read is one sighting per pin, a Gaussian around its ray (0.25 pitch across,
+  25 % of the range along it from the spacing depth). A pin is the least-squares point of its sightings (linear
+  triangulation, Hartley & Sturm 1997; Hartley & Zisserman 2004), robust: with ≥ 3 views the ray farthest beyond
+  0.4 pitch is dropped. A new read must meet the earlier rays (epipolar gate 0.4 pitch, majority of the pins) or
+  it is not fused; two refused reads in a row that agree with each other move the marks (the first read was
+  wrong). Row spacing is now the median gap along the row, not the nearest-neighbour distance.
+- `AR/ArRig.cs`: rays from the CPU image's own intrinsics, with only the quarter-turn read from the display
+  transform (`CameraImageGeometry.TryIntrinsicsRay`); the display-only ray stays as the fallback and the
+  difference between them is recorded per pin. Sightings of a frame are taken together (the spacing needs all
+  pins). Module hints and single pins take the anchored pins' depth instead of a raycast (which finds the table).
+  All marks of an end sit under one transform held by an ARCore anchor (`ARAnchorManager.TryAddAnchorAsync`).
+- `AR/ArRecords.cs` (new): `persistentDataPath/ar-records/<start>.jsonl`, one line per read (pose, matrices,
+  intrinsics, the reader's points, where each mark was in that frame before the read, outcome), a 1 Hz sample of
+  where the marks were drawn, and screenshots on a three-finger tap. Geometry only, no images.
+- `App/InstallerApp.Check.cs`: an explicit read (read, read again, check, find the pins) starts the marks afresh
+  (`ClearAnchors` first, as the device end already did); while the app waits for the installer, `KeepMarksAligned`
+  reads the same end again every 3 s and hands only the positions to the view (colours, verdicts and the session
+  log untouched; dropped if an explicit read started meanwhile). Switches: `InstallerApp.keepMarksAligned`,
+  `alignEverySeconds`; `ArCameraView.arIntrinsicsRays`, `arFuseReads` (off = the 2 Nov behaviour),
+  `arHoldWithArAnchor`, `arRecords`.
+- `ml/tools/ar_records.py` (new) + `ml/tests/test_ar_records.py`: mark offset at each re-read in pitches (where
+  the mark was vs where the reader finds the pin now; no hand labels), outcomes, views per mark, baseline, ray
+  method difference; with `--frames` draws both on the service's saved frames.
+
+**Simulation (production AnchorFusion, Monte Carlo, 8 pins at 35 cm, reader noise 0.08 pitch; Editor check writes
+it to `data/ar-overlay-checks/fusion-simulation.txt`).** Mark offset seen from a point 10 cm away from the reads:
+
+| Row tilt | One read (2 Nov) | Two reads 2 cm apart | Two reads 5 cm apart |
+| --- | --- | --- | --- |
+| 0° | median 0.50 pitch, 51 % within ½ pitch | 0.32, 71 % | 0.14, 99 % |
+| 20° | 1.17, 17 % | 0.33, 69 % | 0.15, 99 % |
+| 35° | 3.67, 0 % | 0.38, 62 % | 0.15, 99 % |
+
+Depth bias of the spacing estimate with the block facing the camera: nearest neighbour +3.9 %, row gaps −0.4 %.
+Four reads with one of them a pin off along the epipolar line: plain fusion 12.4 mm, robust 3.6 mm 3D error.
+A read one pin off *along* the epipolar line cannot be refused by one test (it looks like a depth change); robust
+fusion outvotes it once more views agree. These are simulations, not phone results.
+
+**Checks.** C# compiled (player + editor) against Unity 6000.3.24f1's assemblies and the project's AR Foundation
+6.5. New Editor checks in `ArGeometryChecks` (intrinsics ray = display ray when the views match; only the
+intrinsics ray is right when the CPU image covers 80 % of the texture; fusion of a 35° row within ¼ pitch from
+10 cm away; a read 3 pitches across the row refused; the simulation table) — **to be run in Unity** (batch
+command in `tools/ar-checks/README.md`); the fixtures were cross-checked numerically outside Unity. Python suite 47
+passed.
+
+**Next (phone).** Build, run both ends with `IA_SAVE_FRAMES` on, move the phone 5–10 cm between reads, pull the
+records, run `ar_records.py --frames`. The report numbers are the "first re-read" (2 Nov behaviour) against the
+"later re-reads" (after fusion) offsets.
+
+## 2026-11-14 (evening) · Laptop test with the real A1610: pins two terminals off, slow reads, blurred frames
+
+**Test.** Yu, Unity Editor + phone as webcam (iVCam, 1080 x 1920), real A1610, wires on Reader 1 pins 1-4 (black,
+red, green, yellow). 17 reads saved in `data/live/2026-11-14-editor`. The marks were not on the slots.
+
+**What the frames show** (replayed through the service code):
+1. **Every close-up put the pins 1-3 terminals off.** 15 of 17 reads returned nothing, the 2 that returned
+   colours had them 2 terminals low (yellow read on pin 7/6 instead of 4). Cause: the blocks stand ~1 cm above the
+   board; at 15-25 cm, seen from the side, they sit up to 3 pins from where the board's homography puts them. The
+   old stage 2 searched +-45 px (< 2 pins) in grey, where pins repeat, and the close-up cut the column off, so the
+   match slipped by whole pins. Measured without hand labels by where the housing colour changes from green to
+   blue along the located column: **6 of 16 frames within half a pin before**.
+2. **Reads took 2.7-5.2 s.** On the A1610 the A1601 variant photo found too few ORB pairs and fell back to
+   LightGlue (~2.9 s) on every read.
+3. **13 of 17 frames were motion-blurred** and refused by the blur check: the app sent the single frame of the
+   moment of the tap.
+4. In the Editor the marks did not follow the camera at all (webcam view kept them at fixed image points).
+
+**Fixes.**
+- `locate.py` stage 2a (new, `_block_plane`): the blocks' plane is the board's picture scaled about the point
+  under the camera (planar homology; Hartley & Zisserman 2004), so one scale and one shift. Scale from the pin
+  period in the rectified strip (autocorrelation of narrow strips, measured the same way on the template);
+  place from **colour only** (a*, b*: the housing colours do not repeat) with masked ZNCC over the pixels the
+  frame shows (Padfield 2012), search +-84 px; then lightness too within less than half a pin; then the old
+  per-block fine-tuning. Falls back to the old column match when the colours are not found.
+  **Live frames: 16 of 16 within half a pin (6 before). Session 1 (56 photos, 1920): 98.4 % of pins within half
+  a pitch (98.1 % before), median 0.16 (0.15), all pins right in 50 photos (52).** New tests: a column two pins off
+  in a cut-off close-up (fails on the old code), the pin period, 51 tests pass.
+- `locate()`: variants share one pixel frame, so the board is found once; a variant photo that finds too little
+  borrows the homography instead of running LightGlue. Variant chosen by (colours found, agreement). **~0.5 s
+  per controller read instead of ~3.3 s** (same machine, same frames); the base A1610 photo is now chosen on
+  15 of 16 frames (it is an A1610).
+- App (`InstallerApp.Check.cs`, `App/FrameQuality.cs`): a read takes the sharpest of a 5-frame burst over 0.5 s
+  (variance of the Laplacian; ranks today's frames as the service does: the two it accepted score 3130 and 3844,
+  the smeared ones 127-590), and retries twice by itself when nothing is found, before asking the installer.
+- Webcam view (`AR/PlaneTracker.cs`, `ArCameraView`): Shi-Tomasi corners + pyramidal Lucas-Kanade + RANSAC affine
+  between consecutive camera images (180 x 320 grey); every anchor moves with the picture, a read's positions
+  are carried from its frame to now, the quiet re-reads (every 3 s, now also for the webcam) correct the drift,
+  and marks are hidden when the picture cannot be followed. Simulated hand motion on today's sharp frame
+  (warp + motion blur + noise, 5 s): worst pin 0.05 pitch at moderate speed, 0.2 at fast, lost and recovered at
+  very fast; 7-10 ms per frame (Mono). Not yet measured on real video.
+
+**Still wrong: the wire reader on this board.** With the pins now in the right place (blur check off for this replay), red (pin 2) is read
+right in 15 of 16 frames, yellow (pin 4) in 11 (all sharp close-ups) and the four empty pins in all, but **green (pin 3) is read as "no wire" in 15 of 16
+and black (pin 1) in 14 of 16, with confidence 0.6-1.0** (so no amber mark). The wires are plainly visible in the
+windows. The model has seen no live frame of this camera; this is the domain gap, not placement. Next step:
+`ml/tools/live_patches.py` (new) turns a folder of saved frames with a known wiring into labelled patches
+without hand annotation; record two or more batches with different wirings, then
+`train_pins --sessions session1 session3 live_a live_b` measures each batch with a model that never saw it.
+(Numbers above were computed with scikit-learn 1.9 on the model trained with 1.7; rerun on the laptop.)
+
+## 2026-11-14 · Final verification of the retained camera/recovery version
+
+The retained version uses asynchronous CPU-image conversion on Android and worker JPEG encoding shared
+between wire reading and comparison. Acquisition-time camera metadata stays with each image. Webcam defaults
+request 1920 x 1080; startup logs requested and actual dimensions because iVCam can negotiate a lower size.
+The app retains automatic position-only rereads, including recovery after an empty initial placement. Quiet
+responses are discarded when the flow changes; no retained-reference scene matcher is included in this version.
+A completed cable starts a fresh first-end scan using the separately documented IRecordStore.Forget(key)
+operation, without clearing other cables. UI punctuation encoding was corrected after a standalone check
+caught a mismatched repair-button label. AR record writers close when the rig is disposed.
+
+Pre-commit checks:
+
+- Domain suite: ALL PASSED, including scoped record reset and preservation of unrelated saved work.
+- Python: 51 passed, one dependency deprecation warning, using the declared requirements in an isolated
+  environment (`data/contract-checks-venv`). No model weights, captures or environment files are committed.
+- Unity 6000.3.24f1: 75 AR geometry/tracker assertions passed (`data/commit-geometry.log`).
+- The same reader-flow fixture ran in a temporary standalone Windows player: 45 assertions passed,
+  including fresh scans, retry flows, position recovery and three JPEG checks
+  (`data/commit-flow-player-final.log`, `data/commit-ui-player/evidence/checks.txt`). The test source was copied
+  from ReaderFlowChecks.cs, with editor-only setup replaced by a player startup entry and exit status.
+- Both editor and player scripts compiled; the temporary Windows test-player build succeeded. The editor's
+  Play Mode startup still stalled, so the player result does not claim a new editor Play Mode pass.
+- Changed-file whitespace, text encoding, local Markdown links, new Unity asset metadata and project GUIDs
+  were checked. No generated builds, datasets, credentials or large binaries are included.
+
+No new Android APK was produced. Visual layout, Blueprint_Demo, real ARCore tracking, camera frame rate and
+recognition accuracy still need the normal manual/device integration checks. Saved iVCam replay identified
+black-padded portrait input as a localization failure; configuring full-resolution, correctly oriented camera
+output is required. No automatic letterbox-cropping change is included here.

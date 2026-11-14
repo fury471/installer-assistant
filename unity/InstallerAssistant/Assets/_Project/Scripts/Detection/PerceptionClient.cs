@@ -1,6 +1,8 @@
 using System;
 using System.Collections;
 using System.Text;
+using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 using InstallerAssistant.Labels;
 using InstallerAssistant.Verification;
 using UnityEngine;
@@ -27,6 +29,7 @@ namespace InstallerAssistant.Detection
         public readonly string BaseUrl;
         public int TimeoutSeconds = 20;
         public int JpegQuality = 85;
+        readonly ConditionalWeakTable<CameraFrame, Task<ImagePayload>> encoded = new ConditionalWeakTable<CameraFrame, Task<ImagePayload>>();
 
         public PerceptionClient(string baseUrl) { BaseUrl = (baseUrl ?? "").TrimEnd('/'); }
 
@@ -137,7 +140,8 @@ namespace InstallerAssistant.Detection
         /// <summary>Reads one end. done(response, null) on success, done(null, error) otherwise.</summary>
         public IEnumerator Read(CameraFrame frame, CableEnd end, UsageRule rule, CableLabel cable, Action<ReadResponse, string> done)
         {
-            var image = Encode(frame);
+            ImagePayload image = null;
+            yield return EncodeAsync(frame, value => image = value);
             if (image == null) { done(null, "the camera frame has no pixels (" + (frame != null ? frame.Source : "no frame") + ")"); yield break; }
             bool ctrl = end == CableEnd.Controller;
             var others = ctrl ? AxisCatalog.OtherModules(rule) : new ConnectorSpec[0];
@@ -163,6 +167,9 @@ namespace InstallerAssistant.Detection
         /// <summary>Asks for the independent comparison of both ends. Either frame may be null.</summary>
         public IEnumerator Compare(UsageRule rule, CameraFrame deviceEnd, CameraFrame controllerEnd, Action<CompareResponse, string> done)
         {
+            ImagePayload deviceImage = null, controllerImage = null;
+            yield return EncodeAsync(deviceEnd, value => deviceImage = value);
+            yield return EncodeAsync(controllerEnd, value => controllerImage = value);
             var pairs = new PairPayload[rule.Pairs.Length];
             for (int i = 0; i < pairs.Length; i++)
                 pairs[i] = new PairPayload { terminal = rule.Terminal(rule.Pairs[i].DeviceTerminal).Print, pin = rule.Pairs[i].ControllerPin };
@@ -170,7 +177,7 @@ namespace InstallerAssistant.Detection
             {
                 controller_module = rule.ControllerModule.Code, device_module = rule.DeviceModule.Code,
                 pin_count = rule.Connector.Count, pairs = pairs,
-                device_image = Encode(deviceEnd) ?? new ImagePayload(), controller_image = Encode(controllerEnd) ?? new ImagePayload(),
+                device_image = deviceImage ?? new ImagePayload(), controller_image = controllerImage ?? new ImagePayload(),
             };
             string text = null, error = null;
             yield return Post("/compare", JsonUtility.ToJson(req), (t, e) => { text = t; error = e; });
@@ -222,11 +229,9 @@ namespace InstallerAssistant.Detection
             if (f.Format == FramePixels.Jpeg) jpeg = f.Pixels;
             else if (f.Format == FramePixels.Rgba32 && f.Pixels.Length >= f.Width * f.Height * 4)
             {
-                var tex = new Texture2D(f.Width, f.Height, TextureFormat.RGBA32, false);
-                tex.LoadRawTextureData(f.Pixels);
-                tex.Apply(false);
-                jpeg = tex.EncodeToJPG(JpegQuality);
-                UnityEngine.Object.Destroy(tex);
+                // Array encoding is thread-safe and needs no temporary texture or GPU upload.
+                jpeg = ImageConversion.EncodeArrayToJPG(f.Pixels, UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_UNorm,
+                    (uint)f.Width, (uint)f.Height, 0, JpegQuality);
             }
             else return null;
             return new ImagePayload
@@ -234,6 +239,21 @@ namespace InstallerAssistant.Detection
                 width = f.Width, height = f.Height, format = "jpeg", data_b64 = Convert.ToBase64String(jpeg),
                 intrinsics = f.Intrinsics ?? new float[0],
             };
+        }
+
+        internal IEnumerator EncodeAsync(CameraFrame frame, Action<ImagePayload> done)
+        {
+            if (frame == null) { done(null); yield break; }
+            // Read and Compare often use the same immutable frame. Compress it once and release the
+            // cached result when that frame is no longer retained by the app.
+            var task = encoded.GetValue(frame, key => Task.Run(() => Encode(key)));
+            while (!task.IsCompleted) yield return null;
+            if (task.IsFaulted)
+            {
+                Debug.LogWarning("[PerceptionClient] image encoding failed: " + task.Exception);
+                done(null);
+            }
+            else done(task.Result);
         }
 
         public static string[] TerminalNames(UsageRule rule)

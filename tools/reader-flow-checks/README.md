@@ -40,3 +40,42 @@ with the locally installed Unity 6000.3.25f1. The new APK is
 
 To rebuild it, use the same Unity command with `-buildTarget Android -nographics` and
 `-executeMethod InstallerAssistant.App.Editor.ReaderFlowCheckBatch.BuildAndroid`.
+
+## Current version (14 Nov 2026)
+
+- Scanning a completed cable starts at end 1 with no old floating reference. `IRecordStore.Forget(key)`
+  removes only that cable's old pairing readings; existing in-session reports retain their evidence.
+  Unfinished checks resume the saved first end, including after reopening the JSON store.
+- Camera CPU-image conversion and perception JPEG compression are asynchronous. Read and comparison share
+  the JPEG for the same immutable frame. Camera metadata belongs to acquisition time, not conversion completion.
+  Conversions time out after two seconds; cached camera images older than one second are not returned as fresh.
+- The app still performs position-only reads while awaiting installer input. Recovery can run even if the
+  initial scan placed no markers. It retries sooner when markers are missing, rejects stale responses and
+  stops the quiet-read coroutine when the end changes, a modal opens or the request times out.
+- Webcam marks use optical flow. A tracking loss hides them until a successful position-only read restores
+  them. This is not true world tracking or guaranteed recovery within a fixed number of seconds.
+- Unity requests Full HD by default and logs requested versus actual webcam dimensions. iVCam's own output
+  must be configured accordingly; the Unity Game view does not establish camera resolution. Black-padded
+  portrait captures can still defeat terminal localization. This revision does not crop that padding.
+
+The HTTP/JSON payload is unchanged. The only shared interface addition is the documented per-cable record reset.
+The source fixes do not update an already-installed Android app; a new build is required.
+
+### Validation
+
+Final pre-commit validation: 45 assertions passed when the same UI fixture was run in a temporary standalone
+Windows player built with Unity 6000.3.24f1, using controlled sensor services and `-nographics`. This includes
+fresh checks, failed retries, automatic position recovery after an empty placement, unchanged colours during
+recovery, and worker-JPEG decoding/orientation/reuse. The standalone run caught malformed UTF-8 punctuation
+in button labels; the labels were corrected before the passing run.
+
+The editor's Play Mode startup remained blocked, so this is a player-runtime result, not a new editor Play
+Mode result. The earlier 42 Play Mode assertions are historical. Also passed: 75 AR geometry/tracker checks,
+the domain suite and 51 Python tests (one dependency deprecation warning). See `ml/LOG.md` for evidence paths.
+These checks do not establish visual layout, camera frame rate, real ARCore tracking or recognition accuracy.
+Manual webcam, Android and Blueprint_Demo checks remain separate.
+
+Direct image checks can run without Play Mode using
+`-executeMethod InstallerAssistant.App.Editor.ReaderFlowCheckBatch.RunImageChecks -nographics`.
+They verify JPEG decoding, dimensions, orientation and reuse between read/comparison. The full flow suite
+uses `InstallerAssistant.App.Editor.ReaderFlowCheckBatch.Run`.

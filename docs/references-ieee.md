@@ -190,3 +190,23 @@ Only details that were checked are given; where a page range or DOI could not be
 [62] I. Gulrajani and D. Lopez-Paz, "In search of lost domain generalization," in *Proc. Int. Conf. Learning Representations (ICLR)*, 2021.  
 <sub>key `gulrajani2021`</sub>
 
+[63] S. Pertuz, D. Puig, and M. A. Garcia, "Analysis of focus measure operators for shape-from-focus," *Pattern Recognition*, vol. 46, no. 5, pp. 1415–1432, 2013, doi: 10.1016/j.patcog.2012.11.011.
+<sub>key `pertuz2013`</sub>
+
+[64] R. I. Hartley and P. Sturm, "Triangulation," *Computer Vision and Image Understanding*, vol. 68, no. 2, pp. 146–157, 1997, doi: 10.1006/cviu.1997.0547.
+<sub>key `hartley1997`</sub>
+
+[65] Google, "Working with anchors," ARCore developer documentation. [Online]. Available: https://developers.google.com/ar/develop/anchors (accessed Nov. 14, 2026).
+<sub>key `arcoreanchors`</sub>
+
+[66] B. D. Lucas and T. Kanade, "An iterative image registration technique with an application to stereo vision," in *Proc. 7th Int. Joint Conf. Artificial Intelligence (IJCAI)*, 1981, pp. 674–679.
+<sub>key `lucas1981`</sub>
+
+[67] J. Shi and C. Tomasi, "Good features to track," in *Proc. IEEE Conf. Computer Vision and Pattern Recognition (CVPR)*, 1994, pp. 593–600, doi: 10.1109/CVPR.1994.323794.
+<sub>key `shi1994`</sub>
+
+[68] J.-Y. Bouguet, "Pyramidal implementation of the Lucas Kanade feature tracker: description of the algorithm," Intel Corporation, Microprocessor Research Labs, Tech. Rep., 2001.
+<sub>key `bouguet2001`</sub>
+
+[69] D. Padfield, "Masked object registration in the Fourier domain," *IEEE Transactions on Image Processing*, vol. 21, no. 5, pp. 2706–2718, 2012, doi: 10.1109/TIP.2011.2181402.
+<sub>key `padfield2012`</sub>

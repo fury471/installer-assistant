@@ -30,7 +30,7 @@ that agreed - "not found" against a good homography). Trying it costs nothing wh
 Nothing here knows the wiring: it only says where the pins are.
 """
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -53,6 +53,11 @@ BLOCK_MARGIN = (75, 18, 35, 18)   # default block box around its pins: left, top
                                   # a template can set its own as "block_margin" in its JSON
 BLOCK_SEARCH = 45       # stage 2: how far the column of blocks may move (template px; pins are 24 px apart)
 BLOCK_TIGHT = 5         # then how far each block may move on its own, around the column's offset
+PLANE_SEARCH = 84      # stage 2a: how far the blocks' plane may sit from the board's (template px; 3.5 pins)
+PLANE_SCALE = (0.88, 1.20)   # and how much larger or smaller its picture may be (pin spacing in the view / in the template)
+PLANE_MIN_SCORE = 0.25  # a colour match weaker than this is not used (stage 2 then works as before)
+PLANE_MIN_SEEN = 0.5    # at least this share of the column must be inside the frame where it is placed
+PERIOD_MIN = 0.08       # autocorrelation at one pin spacing below this: no row of pins in the strip
 AGREE_MIN = 0.10        # a placed block must look at least this much like its own block in the reference photo
                         # (colour ZNCC; session 1: correct placements >= 0.19, one block off <= 0.15)
 
@@ -134,40 +139,57 @@ class Located:
     block_agreement: Dict[str, float] = field(default_factory=dict)  # per module: how much it looks like its own block
     matches: list = field(default_factory=list)        # (template point, frame point, inlier?) for drawing
     reference_indices: Dict[str, int] = field(default_factory=dict)   # 0 = original; 1..N = matched housing view
+    plane: bool = False                                # stage 2a placed the column of blocks by its colours
 
 
 def locate(template: Template, image: np.ndarray, refine_blocks: bool = True) -> Located:
     """Where the template's pins are in this frame: grey (H x W) or RGB (H x W x 3), any size.
-    found = False when the device is not in view. With board variants, each is tried and the one with the most
-    blocks agree best in colour with its photo is used (its photo then also serves the block check and the wire reader).
+    found = False when the device is not in view. With board variants, each is tried and the one whose blocks
+    agree best in colour with its photo is used (its photo then also serves the block check and the wire reader).
     Agreement, not the number of feature pairs: on 1 Nov the A1610 photo got a few more pairs on an A1601 frame and
-    all eight empty pins were read as wires."""
+    all eight empty pins were read as wires.
+    The variants share one pixel frame, so the board has to be found only once: every photo first tries its fast
+    matcher, and a photo that finds too little borrows the homography of the one that found most. Only when none
+    finds the board is the slow matcher run. (Before, each photo that failed fell back to the slow matcher on its
+    own: on the real A1610 the A1601 photo did, and every read took 3 to 5 s instead of under one, 14 Nov.)"""
+    h, w = image.shape[:2]
+    s = min(1.0, WORK_SIDE / max(h, w))
+    small = cv2.resize(image, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA) if s < 1 else image
+    gray = small if small.ndim == 2 else cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
+    candidates = [template] + template.variants
+    fits = [_board(t, small, gray, [t.matcher]) for t in candidates]
+    if not any(f[0] is not None for f in fits):
+        fits = [_board(t, small, gray, [m for m in ("orb", "lightglue") if m != t.matcher]) for t in candidates]
+    found = [f for f in fits if f[0] is not None]
+    if not found:
+        return Located(False, max(f[1] for f in fits))
+    shared = max(found, key=lambda f: f[1])
     best = None
-    for t in [template] + template.variants:
-        r = _locate_one(t, image, refine_blocks)
+    for t, fit in zip(candidates, fits):
+        r = _blocks(t, image, small, gray, s, fit if fit[0] is not None else shared, refine_blocks)
         r.variant = t.variant
-        key = (r.found, r.agreement if r.found else 0.0, r.inliers)
+        key = (r.plane, r.agreement, r.inliers)         # a photo whose housing colours were found in the frame first
         if best is None or key > best[0]:
             best = (key, r)
     return best[1]
 
 
 def _locate_one(template: Template, image: np.ndarray, refine_blocks: bool) -> Located:
-    h, w = image.shape[:2]
-    s = min(1.0, WORK_SIDE / max(h, w))
-    small = cv2.resize(image, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA) if s < 1 else image
-    gray = small if small.ndim == 2 else cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
+    """locate() with this photo alone, without the template's variants (ml/tools/make_variant.py)."""
+    return locate(replace(template, variants=[]), image, refine_blocks)
 
-    # stage 1: the whole device, with the template's matcher; the other one only if that finds too little
-    H = mask = None
+
+def _board(template: Template, small: np.ndarray, gray: np.ndarray, matchers: List[str]):
+    """Stage 1: the homography template -> (shrunk) frame with the first of the matchers that finds enough pairs.
+    Returns (H or None, inlier pairs, matches for drawing)."""
     inliers = 0
-    for matcher in [template.matcher] + [m for m in ("orb", "lightglue") if m != template.matcher]:
+    for matcher in matchers:
         if matcher == "lightglue":
             rgb = small if small.ndim == 3 else cv2.cvtColor(small, cv2.COLOR_GRAY2RGB)
             try:
                 src, dst, px = _pairs_lightglue(template, rgb)
             except (FileNotFoundError, ImportError) as e:      # no model file downloaded: ORB still works
-                print("LightGlue not available (%r), trying ORB" % e)
+                print("LightGlue not available (%r)" % e)
                 continue
         else:
             src, dst = _pairs_orb(template, gray)
@@ -178,27 +200,35 @@ def _locate_one(template: Template, image: np.ndarray, refine_blocks: bool) -> L
         h, m = cv2.findHomography(src, dst, RANSAC_METHOD, px)
         k = int(m.sum()) if m is not None else 0
         if h is not None and k >= template.min_inliers:
-            H, mask, inliers = h, m, k
-            break
+            return h, k, [(tuple(a), tuple(b), bool(i)) for a, b, i in zip(src, dst, m.ravel())]
         inliers = max(inliers, k)
-    if H is None:
-        return Located(False, inliers)
+    return None, inliers, []
 
-    # stage 2 on the grey frame: the blocks' own edges say where they are
+
+def _blocks(template: Template, image: np.ndarray, small: np.ndarray, gray: np.ndarray, s: float, fit,
+            refine_blocks: bool) -> Located:
+    """Stage 2 for one photo of the device, from the board's homography."""
+    H, inliers, pairs = fit
+    # stage 2a: the plane the blocks' tops lie in (colour; needs several blocks, some of them in view)
+    board = np.diag([1 / s, 1 / s, 1.0]) @ H             # template -> full-size frame, on the circuit board
+    plane = _block_plane(template, small, H) if refine_blocks and small.ndim == 3 and len(template.modules) > 1 else None
+    if plane is not None:
+        H = H @ plane
+    # stage 2b on the grey frame: each block's own edges say where it is
     references = {}
-    shifts = _block_shifts(template, gray, H, references) if refine_blocks else {}
-    to_frame = np.diag([1 / s, 1 / s, 1.0]) @ H          # template -> full-size frame
+    shifts = _block_shifts(template, gray, H, references, column=plane is None) if refine_blocks else {}
+    to_frame = np.diag([1 / s, 1 / s, 1.0]) @ H          # template -> full-size frame, on the blocks
     result = Located(True, inliers, homography=to_frame, shifts=shifts,
-                     matches=[(tuple(a), tuple(b / s), bool(k)) for a, b, k in zip(src, dst, mask.ravel())],
-                     reference_indices=references)
+                     matches=[(a, (b[0] / s, b[1] / s), k) for a, b, k in pairs], reference_indices=references,
+                     plane=plane is not None)
     if len(template.modules) > 1:
         result.doubtful, result.agreement, result.block_agreement = _check_blocks(
             template, image if image.ndim == 3 else None, to_frame, shifts)
     for module, pins in template.modules.items():
         dx, dy = shifts.get(module, (0, 0))
-        for target, ox, oy in ((result.board_only, 0, 0), (result.pins, dx, dy)):
+        for target, ox, oy, via in ((result.board_only, 0, 0, board), (result.pins, dx, dy, to_frame)):
             pts = np.float32([[p["x"] + ox, p["y"] + oy] for p in pins]).reshape(-1, 1, 2)
-            target[module] = [tuple(map(float, q)) for q in cv2.perspectiveTransform(pts, to_frame).reshape(-1, 2)]
+            target[module] = [tuple(map(float, q)) for q in cv2.perspectiveTransform(pts, via).reshape(-1, 2)]
     return result
 
 
@@ -317,15 +347,155 @@ def _lab(template: Template) -> np.ndarray:
     return template.lab
 
 
+def _block_plane(template: Template, small: np.ndarray, H: np.ndarray) -> Optional[np.ndarray]:
+    """Stage 2a: the plane of the terminal blocks, as a 3 x 3 map in template pixels (template point -> where it
+    is in the frame rectified with the board's homography), or None when too little of the column is in view.
+
+    The blocks' tops lie in a plane parallel to the board, about a centimetre above it. Seen through the board's
+    homography, a parallel plane is the board's picture scaled about the point under the camera (a planar homology
+    whose axis is the line at infinity; Hartley & Zisserman, 2004, sec. A7.2 and ch. 13): one scale and one shift,
+    no rotation. Close up or from the side that shift is several pins (14 Nov: every pin two terminals low at
+    15 cm), more than the old search of 45 px allowed, and in grey the pins repeat, so the match slipped by whole
+    pins. Here the column of blocks is matched in colour (CIELAB), where the change of housing colour between
+    blocks is a landmark that does not repeat, at several scales, and only with the part of the column that is
+    inside the frame (a close-up cuts the column off; black outside the frame is not a block)."""
+    th, tw = template.gray.shape[:2]
+    inv = np.linalg.inv(H)
+    view = cv2.warpPerspective(small, inv, (tw, th), flags=cv2.INTER_AREA)
+    seen = cv2.warpPerspective(np.full(small.shape[:2], 255, np.uint8), inv, (tw, th), flags=cv2.INTER_NEAREST)
+    boxes = _block_boxes(template)
+    x0, y0 = min(b[0] for b in boxes.values()), min(b[1] for b in boxes.values())
+    x1, y1 = max(b[2] for b in boxes.values()), max(b[3] for b in boxes.values())
+    r = PLANE_SEARCH
+    X0, X1, Y0, Y1 = max(0, x0 - r), min(tw, x1 + r), max(0, y0 - r), min(th, y1 + r)
+    mask = (seen[Y0:Y1, X0:X1] > 0).astype(np.float32)
+    spacing = _pin_spacing(template)
+    lab = srgb_to_lab(view[Y0:Y1, X0:X1].astype(np.float64)).astype(np.float32)
+    # 1. the scale, from how far apart the pins are in this view: the one thing a repeating row tells exactly
+    period = _row_period(lab[:, :, 0], mask, spacing)
+    own = _row_period(_lab(template)[Y0:Y1, X0:X1, 0], np.ones(mask.shape, np.float32), spacing)   # same measure, same strip
+    if period is None or own is None:
+        return None
+    k = period / own
+    resized = lambda img: cv2.resize(img, None, fx=k, fy=k, interpolation=cv2.INTER_AREA if k < 1 else cv2.INTER_LINEAR)
+    # 2. the place, from the colours alone (a* and b*, no lightness): the pins and their shadows repeat in
+    #    lightness, the housings' colours do not, so this match cannot slip by a pin. Only pixels the frame
+    #    shows count (a close-up cuts the column off), and at least PLANE_MIN_SEEN of the column must be among them.
+    column = resized(_lab(template)[y0:y1, x0:x1])
+    if column.shape[0] > lab.shape[0] or column.shape[1] > lab.shape[1]:
+        return None
+    score, cover = _masked_zncc(lab[:, :, 1:], mask, column[:, :, 1:])
+    score[cover < PLANE_MIN_SEEN] = -1
+    _, top, _, (lx, ly) = cv2.minMaxLoc(score)
+    if top < PLANE_MIN_SCORE:
+        return None
+    # 3. then exactly, with lightness too, but less than half a pin around that place
+    near = int(period * 0.45)
+    ax, ay = max(0, lx - near), max(0, ly - near)
+    bx, by = min(lab.shape[1], lx + near + column.shape[1]), min(lab.shape[0], ly + near + column.shape[0])
+    fine, cover = _masked_zncc(lab[ay:by, ax:bx], mask[ay:by, ax:bx], column)
+    fine[cover < PLANE_MIN_SEEN] = -1
+    _, _, _, (fx, fy) = cv2.minMaxLoc(fine)
+    lx, ly = ax + fx, ay + fy
+    # template point (x, y) is at (X0 + lx + k (x - x0), Y0 + ly + k (y - y0)) in the rectified frame
+    return np.array([[k, 0, X0 + lx - k * x0], [0, k, Y0 + ly - k * y0], [0, 0, 1]], float)
+
+
+def _masked_zncc(image: np.ndarray, mask: np.ndarray, patch: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Zero-mean normalised cross-correlation of patch at every place in image, counting only the pixels where
+    mask is 1 (Padfield, 2012, with the mask on the image side), averaged over the channels. Returns the score
+    map and the share of the patch that lay on masked-in pixels at each place."""
+    ones = np.ones(patch.shape[:2], np.float32)
+    corr = lambda a, b: cv2.matchTemplate(np.ascontiguousarray(a, np.float32), np.ascontiguousarray(b, np.float32), cv2.TM_CCORR)
+    count = corr(mask, ones)
+    safe = np.maximum(count, 1.0)
+    total = np.zeros_like(count)
+    channels = image.shape[2] if image.ndim == 3 else 1
+    for c in range(channels):
+        i = (image[:, :, c] if image.ndim == 3 else image) * mask
+        t = patch[:, :, c] if patch.ndim == 3 else patch
+        si, si2, sit = corr(i, ones), corr(i * i, ones), corr(i, t)
+        st, st2 = corr(mask, t), corr(mask, t * t)
+        num = sit - si * st / safe
+        den = np.sqrt(np.maximum(si2 - si * si / safe, 0) * np.maximum(st2 - st * st / safe, 0))
+        total += num / (den + 1e-6 * patch.size)
+    return total / channels, count / float(ones.size)
+
+
+def _row_period(lightness: np.ndarray, mask: np.ndarray, expected: float) -> Optional[float]:
+    """The pin spacing (px) in a strip that holds a column of terminal blocks, pins repeating down the strip:
+    the lag of the strongest autocorrelation peak near the expected spacing, followed out over several periods
+    for precision. None when the strip shows no clear period there."""
+    rows = lightness.astype(np.float64)
+    n = rows.shape[0] - 1
+    if n < 5 * expected:
+        return None
+    # narrow strips, each autocorrelated on its own and then averaged: the pins need not line up across the strip
+    # (a view that is a little skewed), and strips without pins only add a flat floor. Rows outside the frame
+    # are left out strip by strip.
+    ac, weight = np.zeros(n), np.zeros(n)
+    width = 12
+    for x in range(0, rows.shape[1] - width + 1, width):
+        inside = mask[:, x:x + width].min(1) > 0
+        edges = np.flatnonzero(np.diff(np.concatenate(([0], inside.astype(np.int8), [0]))))
+        if edges.size == 0:
+            continue
+        runs = edges.reshape(-1, 2)
+        first, last = runs[np.argmax(runs[:, 1] - runs[:, 0])]
+        if last - first < 5 * expected:
+            continue
+        profile = np.diff(rows[first:last, x:x + width].mean(1))
+        p = profile - cv2.GaussianBlur(profile.reshape(-1, 1), (1, 0), expected).ravel()
+        m = len(p)
+        ac[:m] += np.correlate(p, p, "full")[m - 1:]
+        weight[:m] += np.arange(m, 0, -1) / m                # fewer products at far lags
+    if ac[0] <= 0:
+        return None
+    ac = ac / np.maximum(weight, 1e-9)
+    ac = ac / (ac[0] + 1e-12)
+    n = int(np.flatnonzero(weight > 0.2 * weight[0]).max()) + 1
+    lo, hi = PLANE_SCALE[0] * expected, PLANE_SCALE[1] * expected
+    best = None
+    lag = int(round(lo)) + int(np.argmax(ac[int(round(lo)):int(round(hi)) + 1]))
+    if ac[lag] < PERIOD_MIN:
+        return None
+    period = float(lag)
+    if 0 < lag < n - 1:
+        d = ac[lag - 1] - 2 * ac[lag] + ac[lag + 1]
+        period = lag + (0.5 * (ac[lag - 1] - ac[lag + 1]) / d if d < 0 else 0.0)
+    for m in range(2, 9):                                    # follow the peak outwards: the m-th peak is at m periods
+        centre = int(round(period * m))
+        if centre + 3 >= n - int(2 * expected):
+            break
+        j = centre - 3 + int(np.argmax(ac[centre - 3:centre + 4]))
+        if ac[j] < PERIOD_MIN:
+            break
+        if 0 < j < n - 1:                                    # sub-pixel: a parabola through the peak
+            d = ac[j - 1] - 2 * ac[j] + ac[j + 1]
+            j = j + (0.5 * (ac[j - 1] - ac[j + 1]) / d if d < 0 else 0.0)
+        period = j / m
+    return period
+
+
+def _pin_spacing(template: Template) -> float:
+    """Median distance between neighbouring pins of the template's modules (template px)."""
+    gaps = []
+    for pins in template.modules.values():
+        pts = np.array([[p["x"], p["y"]] for p in pins], float)
+        if len(pts) > 1:
+            gaps += list(np.linalg.norm(np.diff(pts, axis=0), axis=1))
+    return float(np.median(gaps)) if gaps else 24.0
+
+
 def _block_shifts(template: Template, small: np.ndarray, H: np.ndarray,
-                  reference_indices: Optional[Dict[str, int]] = None) -> Dict[str, Tuple[int, int]]:
+                  reference_indices: Optional[Dict[str, int]] = None, column: bool = True) -> Dict[str, Tuple[int, int]]:
     """Stage 2: each block's offset in template pixels, found in the frame warped into the template's view."""
     th, tw = template.gray.shape[:2]
     warped = cv2.warpPerspective(small, np.linalg.inv(H), (tw, th))
     gray = warped if warped.ndim == 2 else cv2.cvtColor(warped, cv2.COLOR_RGB2GRAY)
     boxes = _block_boxes(template)
-    column = (min(b[0] for b in boxes.values()), min(b[1] for b in boxes.values()),
-              max(b[2] for b in boxes.values()), max(b[3] for b in boxes.values()))
+    column_box = (min(b[0] for b in boxes.values()), min(b[1] for b in boxes.values()),
+                  max(b[2] for b in boxes.values()), max(b[3] for b in boxes.values()))
 
     def match(box, cx, cy, r, references=()):
         x0, y0, x1, y1 = box
@@ -349,7 +519,9 @@ def _block_shifts(template: Template, small: np.ndarray, H: np.ndarray,
                 reference_indices[m] = index
         return shifts
 
+    if not column:                                       # stage 2a placed the column already: only the fine-tuning
+        return {m: match(b, 0, 0, BLOCK_TIGHT)[0] for m, b in boxes.items()}
     # first all blocks together: the whole column of blocks has one shape, so it cannot slip by one pin unnoticed
-    (cdx, cdy), _ = match(column, 0, 0, BLOCK_SEARCH)
+    (cdx, cdy), _ = match(column_box, 0, 0, BLOCK_SEARCH)
     # then each block on its own, only a little around the common offset
     return {m: match(b, cdx, cdy, BLOCK_TIGHT)[0] for m, b in boxes.items()}

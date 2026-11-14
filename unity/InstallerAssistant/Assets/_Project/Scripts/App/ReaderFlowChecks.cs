@@ -26,9 +26,14 @@ namespace InstallerAssistant.App.Editor
         static ReaderFlowCheckBatch() { EditorApplication.playModeStateChanged += OnPlayMode; }
         public static void Run()
         {
+            Application.runInBackground = true;
             SessionState.SetBool(Pending, true);
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             EditorApplication.isPlaying = true;
+        }
+        public static void RunImageChecks()
+        {
+            new GameObject("Image encoding checks").AddComponent<ReaderFlowChecks>().RunEncodingOnly();
         }
         public static void BuildAndroid()
         {
@@ -72,6 +77,25 @@ namespace InstallerAssistant.App.Editor
             output = Path.GetFullPath(Path.Combine(Application.dataPath, "../../../data/reader-flow-checks"));
             Directory.CreateDirectory(output);
             StartCoroutine(Guard(Check(), true));
+        }
+        public void RunEncodingOnly()
+        {
+            try
+            {
+                Pump(CheckEncoding(), DateTime.UtcNow.AddSeconds(30));
+                Debug.Log("[ReaderFlowChecks] IMAGE CHECKS PASSED: " + passed.Count);
+                EditorApplication.Exit(0);
+            }
+            catch (Exception e) { Debug.LogException(e); EditorApplication.Exit(1); }
+        }
+        static void Pump(IEnumerator routine, DateTime deadline)
+        {
+            while (routine.MoveNext())
+            {
+                if (DateTime.UtcNow > deadline) throw new Exception("Image encoding check timed out");
+                if (routine.Current is IEnumerator nested) Pump(nested, deadline);
+                else System.Threading.Thread.Sleep(1);
+            }
         }
         IEnumerator Guard(IEnumerator routine, bool finish = false)
         {
@@ -181,6 +205,92 @@ namespace InstallerAssistant.App.Editor
             yield return WaitText("Which colour is on +?");
             Assert(Get("modalOpen") is bool open && open, "no-wire row opens the colour correction dialog");
             app.StopAllCoroutines();
+
+            // Completed evidence must not turn a new scan into the second end of the previous check.
+            var store = (IRecordStore)Get("records");
+            var completedController = (ControllerRecord)Get("ctrlRecord");
+            store.Save(record); store.Save(completedController);
+            var previous = Get("current");
+            var stateField = previous.GetType().GetField("State");
+            stateField.SetValue(previous, Enum.Parse(stateField.FieldType, "Verified"));
+            Call("SelectCableForCheck", label, false);
+            Assert(Get("record") == null && Get("ctrlRecord") == null, "completed pair is not reused for a new first end");
+            Assert(!ReferenceEquals(previous, Get("current")) && stateField.GetValue(previous).ToString() == "Verified",
+                "new check preserves the completed report's cable object");
+            ControllerRecord savedController;
+            Assert(!store.TryGet(label.Key, out saved) && !store.TryGet(label.Key, out savedController),
+                "fresh check drops the old pair from persistent pairing evidence");
+            // Both saved ends can also be present after restarting the app, without a session Cable entry.
+            store.Save(record); store.Save(completedController);
+            Call("SelectCableForCheck", label, false);
+            Assert(Get("record") == null && Get("ctrlRecord") == null, "stored completed pair starts fresh after session reset");
+            Set("record", record); store.Save(record);
+            var diskPath = Path.Combine(output, "fresh-pair-records.json");
+            var disk = new JsonRecordStore(diskPath);
+            disk.Clear(); disk.Save(record);
+            disk.Save(new ControllerRecord(label.AtEnd(CableEnd.Controller), AxisCatalog.OsdpReaderOnReader1,
+                new[] { 1,0,2,3,-1,-1,-1,-1 }, new float[8], new bool[8], DateTime.Now));
+            disk.Forget(label.Key); disk.Save(record);
+            var reopened = new JsonRecordStore(diskPath);
+            Assert(reopened.TryGet(label.Key, out saved) && !reopened.TryGet(label.Key, out savedController),
+                "reopening a fresh unfinished check keeps only its new first end");
+            Call("MarkOneEnd", Get("current"), CableEnd.Device, DateTime.Now);
+            Call("SelectCableForCheck", label.AtEnd(CableEnd.Controller), false);
+            Assert(Get("record") != null && Get("ctrlRecord") == null,
+                "unfinished new check resumes its saved end without the previous opposite end");
+            Call("SelectCableForCheck", label.AtEnd(CableEnd.Controller), true);
+            Assert(Get("record") != null && Get("ctrlRecord") == null, "pairing does not reload stale opposite-end evidence");
+
+            // Drive the real label/read flow again with the previously completed cable.
+            stateField.SetValue(Get("current"), Enum.Parse(stateField.FieldType, "Verified"));
+            Set("labels", new FoundLabel { Label = label });
+            reader.Next.Enqueue(Reading(new[] { 0,1,2,3 }, .99f));
+            Call("StartCheck", CableEnd.Device);
+            yield return WaitButton("Save reader end");
+            Assert(((TMP_Text)Get("stepLine")).text.Contains("end 1 of 2"), "new scan starts at end one");
+            Assert(Get("snapshot") == null, "new first-end scan has no previous floating reference");
+            app.StopAllCoroutines();
+
+            // Losing the picture hides the markers, then a position-only read restores them automatically.
+            Set("op", null); view.Live = true; app.alignEverySeconds = 10f;
+            Set("waitingForInstaller", true);
+            Call("AnchorMarks", CableEnd.Device, null, view.Latest); // no terminals in the initial placement
+            view.Anchors.Clear(); Call("UpdateCheck");
+            var marks = (List<PinMarker>)Get("marks");
+            Assert(marks.TrueForAll(m => !m.Root.gameObject.activeSelf), "lost terminals hide their overlays");
+            var originalColours = (int[])((int[])Get("readColours")).Clone();
+            reader.Next.Enqueue(Reading(new[] { 3,2,1,0 }, .99f));
+            int readsBefore = reader.Count;
+            app.StartCoroutine((IEnumerator)Call("KeepMarksAligned"));
+            yield return Until(() => reader.Count > readsBefore && view.Anchors.Count == 4, "automatic terminal recovery");
+            Call("UpdateCheck");
+            Assert(marks.TrueForAll(m => m.Root.gameObject.activeSelf), "returning to wiring restores all overlays without a tap");
+            Assert(string.Join(",", originalColours) == string.Join(",", (int[])Get("readColours")),
+                "overlay recovery does not change confirmed wire colours");
+            app.StopAllCoroutines();
+            yield return CheckEncoding();
+        }
+
+        IEnumerator CheckEncoding()
+        {
+            var pixels = new byte[64 * 64 * 4];
+            for (int y = 0; y < 64; y++) for (int x = 0; x < 64; x++)
+            {
+                int i = (y * 64 + x) * 4;
+                pixels[i] = (byte)(y < 32 ? 255 : 0);
+                pixels[i + 2] = (byte)(y < 32 ? 0 : 255); pixels[i + 3] = 255;
+            }
+            var frame = new CameraFrame { Width = 64, Height = 64, Format = FramePixels.Rgba32, Pixels = pixels };
+            var client = new PerceptionClient("http://unused");
+            PerceptionClient.ImagePayload first = null, second = null;
+            yield return client.EncodeAsync(frame, value => first = value);
+            yield return client.EncodeAsync(frame, value => second = value);
+            Assert(first != null && ReferenceEquals(first, second), "read and comparison share one worker-encoded image");
+            var texture = new Texture2D(2, 2);
+            Assert(texture.LoadImage(Convert.FromBase64String(first.data_b64)), "worker JPEG decodes");
+            Assert(texture.width == 64 && texture.height == 64 && texture.GetPixel(16, 8).r > .8f &&
+                texture.GetPixel(16, 56).b > .8f, "worker JPEG preserves image dimensions and bottom-up orientation");
+            Destroy(texture);
         }
 
         IEnumerator Confirm(Action done) { yield return (IEnumerator)Call("ConfirmWires", "Save reader end"); done(); }
@@ -237,14 +347,21 @@ namespace InstallerAssistant.App.Editor
         sealed class View : ICameraView
         {
             public readonly Dictionary<string,Vector2> Anchors = new Dictionary<string,Vector2>(); long id;
+            public bool Live;
             public bool SeeThrough => false; public Vector2 LabelHint => Vector2.one * .5f; public float MarkerScale => 1;
-            public CameraFrame Latest => new CameraFrame { Id = ++id };
+            public CameraFrame Latest => Live ? new CameraFrame { Id = ++id, Format = FramePixels.Rgba32, Width = 1, Height = 1, Pixels = new byte[4] } : new CameraFrame { Id = ++id };
             public RectTransform Attach(RectTransform p) { var r = UiKit.Rect("Test camera",p); UiKit.Stretch(r); return r; }
             public void Detach() { } public void Tick() { } public void ShowEnd(CableEnd e) { Anchors.Clear(); }
             public void ClearAnchors() { Anchors.Clear(); }
             public void Anchor(string key, ImagePoint p, CameraFrame f) { Anchors[key] = new Vector2(p.X,p.Y); }
             public bool TryGetPosition(string key, out Vector2 p) { return Anchors.TryGetValue(key,out p); }
             public EndSnapshot Snapshot(CableEnd e, ImagePoint[] p) { return new EndSnapshot { End = e }; }
+        }
+        sealed class FoundLabel : ILabelScanner
+        {
+            public CableLabel Label;
+            public IEnumerator Scan(CameraFrame frame, Action<LabelScan> done)
+            { yield return null; done(new LabelScan { Status = LabelScanStatus.Found, Label = Label }); }
         }
         sealed class Operator : IStudyOperator
         {

@@ -222,6 +222,78 @@ board it was trained on.
 - Lesson for the method: live frames must be saved at every bench session (`IA_SAVE_FRAMES`); the 31 Oct issues could
   only be studied from screenshots.
 
+## 3d. Keeping the AR marks on the pins (package B, 14 Nov; Yu covering B)
+
+**Problem.** A read returns image positions; the AR view must turn them into world points. One read gives one depth
+for the block, from the pin spacing (pinhole: z = f·pitch/spacing). That holds only when the block faces the camera:
+the spacing shrinks with cos(tilt), so the depth is long by 1/cos − 1 (35°: 22 %), invisible while the phone stays
+still and growing into a visible slide as soon as it moves.
+
+**Method.** Each read is one sighting per pin: a Gaussian around the camera ray, tight across it (reader error,
+0.25 pitch) and loose along it (the spacing depth, 25 %). A pin is the least-squares point of its sightings, i.e.
+linear triangulation over all rays [hartley1997; hartley2004, ch. 12] with the spacing depth as a weak prior, made
+robust by dropping the worst ray beyond 0.4 pitch once three or more views exist. A new read is fused only if its
+rays meet the earlier ones (epipolar gate 0.4 pitch, majority of the pins). The app supplies the extra views by
+reading the same end again every 3 s while the marks are shown, positions only. Rays come from the CPU image's own
+intrinsics (only the quarter-turn is taken from the display transform), because ARCore's CPU image may not share the
+screen texture's field of view. The marks of an end are held by one ARCore anchor [arcoreanchors].
+
+**Simulation (Monte Carlo, production code; 8 pins at 35 cm, reader noise 0.08 pitch; offset seen 10 cm away).**
+
+| Row tilt | One read | Two reads 2 cm apart | Two reads 5 cm apart |
+| --- | --- | --- | --- |
+| 0° | median 0.50 pitch · 51 % within ½ pitch | 0.32 · 71 % | 0.14 · 99 % |
+| 20° | 1.17 · 17 % | 0.33 · 69 % | 0.15 · 99 % |
+| 35° | 3.67 · 0 % | 0.38 · 62 % | 0.15 · 99 % |
+
+Also: the nearest-neighbour spacing read the depth 3.9 % long even facing the camera (the smaller of two noisy
+gaps); the median gap along the row: −0.4 %. With one of four reads a pin off along the epipolar line, plain
+fusion is 12.4 mm off in 3D, the robust version 3.6 mm.
+
+**Measure on the phone (to fill in).** `ml/tools/ar_records.py`: the mark offset at each re-read, in pitches, between
+where the mark was drawn and where the reader finds the pin in the new frame. No hand labels are needed; the
+reader's own error (bench: median 0.05, worst 0.28 pitch) is the floor. Report the first re-read (one read, the
+2 Nov behaviour) against later re-reads (fused), median, 90th percentile, share within ½ pitch, at facing and
+~35° views. Also `rayMethodPx` (does the CPU image share the texture's view on this phone).
+
+**Limits.** Small baselines triangulate weakly (2 cm: 62–71 % within ½ pitch); a read one pin off along the
+epipolar line looks like a depth change and is only outvoted later; ARCore pose error is not modelled.
+
+## 3e. Close-ups: the blocks' plane, and what the laptop test showed (14 Nov, evening)
+
+**Finding.** First test on the real A1610 at 15-25 cm (17 saved frames): pins placed 1-3 terminals off in every
+close-up. The terminal blocks stand about 1 cm above the board, so their picture is the board's picture scaled
+about the point under the camera (a planar homology between parallel planes [hartley2004]); close up and from the
+side that is several pins, the grey match of stage 2 repeats every pin, and the frame cut the column off.
+
+**Method (stage 2a).** Scale from the pin period (autocorrelation of the rectified strip, relative to the
+template's); position from colour only (CIELAB a*, b*: housing colours do not repeat) with masked normalised
+cross-correlation over the pixels the frame shows [padfield2012]; then lightness within half a pin; then the
+per-block fine-tuning as before.
+
+**Results.**
+
+| | Before | After |
+| --- | --- | --- |
+| Live close-ups, column within half a pin (16 frames; colour-boundary measure, no hand labels) | 6 | 16 |
+| Session 1, pins within half a pitch (56 photos) | 98.1 % | 98.4 % |
+| Session 1, median pin error | 0.15 pitch | 0.16 pitch |
+| Controller read time, locate only (same frames, same machine) | ~3.3 s | ~0.5 s |
+
+The time: the A1601 variant photo fell back to the slow matcher on every A1610 frame; variants share a pixel
+frame, so the board is now found once.
+
+**Frame choice.** 13 of 17 frames were motion-blurred (single frame at the tap). The app now sends the sharpest
+of a 5-frame burst (variance of the Laplacian [pertuz2013]) and retries twice on its own.
+
+**Marks without AR (webcam view).** Corners [shi1994] followed by pyramidal Lucas-Kanade [lucas1981; bouguet2001],
+robust affine fit per frame, re-reads every 3 s to remove drift. Simulation on a real frame: 0.05 pitch at
+moderate hand motion over 5 s. To measure on real video.
+
+**Open, and the largest remaining error.** With correct placement, the reader misses the green and the black wire
+on this board with high confidence (15/16 and 14/16 frames); red is right in 15/16, yellow in 11/16, the empty pins in all. Live
+batches with known wirings (`ml/tools/live_patches.py`), then leave-one-batch-out retraining.
+
 ## 4. Open (to fill in later)
 
 - [ ] Session 2: final numbers for all tables above (`eval_locate --session session2`, both ends).

@@ -46,6 +46,13 @@ namespace InstallerAssistant.App
         public string recordsFile = "installer-assistant-records.json";
         [Tooltip("Test only: the live label scanner \"finds\" this label every time, e.g. IA|C01|D1|A1610.READER1|A4020E (no end: the app asks which end).\nLets you run the live flow before QR decoding works. Leave empty for real scanning.")]
         public string testLabel = "";
+        [Tooltip("Live cameras: while the marks are shown, read the same end again every few seconds and use only the positions, so the marks stay on the terminals (AR: each pin triangulated from several views; webcam: the tracker corrected). Colours and verdicts are not changed.")]
+        public bool keepMarksAligned = true;
+        [Tooltip("Seconds between those quiet re-reads.")]
+        [Range(1f, 10f)] public float alignEverySeconds = 3f;
+        [Tooltip("Live cameras: a read uses the sharpest of this many frames taken over Burst Seconds (1 = the frame of the moment, as before).")]
+        [Range(1, 8)] public int burstFrames = 5;
+        [Range(0.1f, 1.5f)] public float burstSeconds = 0.5f;
 
         [Header("Look")]
         [Tooltip("Overlay settings for live mode. The Wizard of Oz uses the values of its DemoLayout.")]

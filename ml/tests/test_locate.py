@@ -82,21 +82,57 @@ def test_reader_patch_colours_are_bound_to_physical_terminal_names():
         np.testing.assert_allclose(patch[10, 30], colour, atol=2)
 
 
+def _column_moved(tpl, down):
+    moved = tpl.rgb.copy()
+    strip = moved[600:1300, 40:240].copy()                     # the column of blocks
+    shifted = np.empty_like(strip)
+    shifted[down:] = strip[:-down]                             # the blocks stand lower on the photo
+    shifted[:down] = strip[:1]
+    moved[600:1300, 40:240] = shifted
+    return moved
+
+
+def _pin_errors(tpl, res, dx, dy, offset=(0, 0)):
+    out = {}
+    for module, pins in tpl.modules.items():
+        truth = np.array([[p["x"] + dx - offset[0], p["y"] + dy - offset[1]] for p in pins], float)
+        out[module] = float(np.abs(np.array(res.pins[module]) - truth).max())
+    return out
+
+
 def test_a_block_moved_by_a_whole_pin_is_found_where_it_is():
     """The terminal blocks stand above the board, so a tilted phone moves them by up to a pin against the printed
     circuit. Stage 2 has to follow that, or every pin would be read at its neighbour's wire."""
     tpl = Template.load("A1610")
-    moved = tpl.rgb.copy()
-    strip = moved[600:1300, 40:240].copy()                     # the column of blocks
-    shifted = np.empty_like(strip)
-    shifted[25:] = strip[:-25]                                 # the blocks stand 25 px lower on the photo
-    shifted[:25] = strip[:1]
-    moved[600:1300, 40:240] = shifted
-    res = locate(tpl, moved)
+    res = locate(tpl, _column_moved(tpl, 25))
     assert res.found
-    for module, (dx, dy) in res.shifts.items():
-        assert abs(dy - 25) <= 6 and abs(dx) <= 6, (module, dx, dy)
+    for module, error in _pin_errors(tpl, res, 0, 25).items():
+        assert error <= 6, (module, error)
 
+
+def test_blocks_two_pins_off_in_a_close_up_are_found_where_they_are():
+    """14 Nov, phone 15 cm from the A1610: the blocks stood two pins away from where the board's homography put
+    them, beyond the old search, and the frame cut the column off above Reader 2, so the grey match slipped by
+    whole pins (every wire read two terminals off). The colour of the housings does not repeat: stage 2a must
+    place the column from it, using only what the frame shows."""
+    tpl = Template.load("A1610")
+    moved = _column_moved(tpl, 50)                             # two pins and a bit
+    top = 800                                                  # the frame starts inside Reader 2: Door 2 is out of view
+    res = locate(tpl, np.ascontiguousarray(moved[top:1500, :900]))
+    assert res.found
+    errors = _pin_errors(tpl, res, 0, 50, offset=(0, top))
+    for module in ("A1610.READER1", "A1610.DOOR1"):
+        assert errors[module] <= 6, (module, errors[module])
+
+
+def test_row_period_reads_the_pin_spacing():
+    from ml.perception_service import locate as L
+    y = np.arange(400, dtype=np.float32)
+    strip = np.tile((127 + 100 * np.sign(np.sin(2 * np.pi * y / 26.4)))[:, None], (1, 60)).astype(np.float32)
+    period = L._row_period(strip, np.ones(strip.shape, np.float32), 24.0)
+    assert period is not None and abs(period - 26.4) < 0.3
+    flat = np.full((400, 60), 90, np.float32)
+    assert L._row_period(flat, np.ones(flat.shape, np.float32), 24.0) is None
 
 
 def test_reader_template_uses_lightglue_and_finds_a_known_view():

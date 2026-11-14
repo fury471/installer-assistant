@@ -22,7 +22,7 @@ Modules needed: Android Build Support, OpenJDK, Android SDK & NDK Tools.
 6. `docs/design-rationale.md` – why the app is designed as it is, with references; the source for the course report.
 
 Run the app: open `Assets/_Project/Scenes/App.unity`, Game view 1080 × 2340 portrait, Play.
-It starts in Wizard-of-Oz mode (bench photos). Set **Mode = Live** on the `Installer Assistant` object to run on the camera.
+The current `App.unity` scene starts in **Live** mode. Set **Mode = Wizard of Oz** on the `Installer Assistant` object to use the bench-photo fallback; `Blueprint_Demo.unity` remains the WoZ fixture.
 
 ## The product and the Wizard of Oz
 
@@ -30,7 +30,7 @@ There is **one app** (`Scripts/App`). It talks to the outside only through contr
 
 | Contract | Wizard of Oz (`Scripts/WizardOfOz`) | Live |
 | --- | --- | --- |
-| `ICameraView` (B) | `PhotoCameraView`: bench photos | `ArCameraView`: webcam now, AR Foundation next |
+| `ICameraView` (B) | `PhotoCameraView`: bench photos | `ArCameraView`: AR Foundation/ARCore on Android, webcam in the Editor |
 | `ILabelScanner` (A) | `WozLabelScanner` | `QrLabelScanner` (ZXing.Net) |
 | `IWireReader` (A) | `WozWireReader` | `PerceptionWireReader` → `ml/perception_service` |
 | `ISecondOpinion` (A) | `WozSecondOpinion` | `PerceptionSecondOpinion` → `ml/perception_service` |

@@ -19,9 +19,13 @@ namespace InstallerAssistant.AR
     /// On the phone (arCamera on): the AR camera, ArRig (stage 1 below, built at run time). Marks are world anchors and
     /// stay on the pins while the phone moves.
     ///
-    /// In the Editor, or with arCamera off (stage 0): a webcam fallback. It shows a WebCamTexture full screen, hands
-    /// its pixels to the readers as RGBA32 frames, and keeps anchors as 2D image points, so marks stay where they were
-    /// read on the screen, not on the pins. Enough to run the whole live flow with a laptop camera and the service.
+    /// In the Editor, or with arCamera off (stage 0): a webcam fallback. It shows a WebCamTexture full screen and hands
+    /// its pixels to the readers as RGBA32 frames. There is no AR pose here, so the marks are kept on the pins in
+    /// the image itself: PlaneTracker follows the picture from one camera image to the next (corners, pyramidal
+    /// Lucas-Kanade, a robust affine fit), every anchor moves with it, and an anchor set from a frame that was read
+    /// a moment ago is first carried to now. When the picture cannot be followed (blur, the board left the image)
+    /// the marks are hidden until the next read, never left where they were. Enough to run the whole live flow
+    /// with a laptop camera, or a phone as the laptop's camera, and the service.
     ///
     /// Stage 1 (ArRig.cs), the AR Foundation 6.5 camera, keeping this class's public behaviour.
     ///   Frames    ARCameraManager.TryAcquireLatestCpuImage(out XRCpuImage img); img.Convert(new
@@ -46,7 +50,11 @@ namespace InstallerAssistant.AR
         public bool webcamFallback = true;
         [Tooltip("Webcam name; empty = the first back-facing camera, else the first camera.")]
         public string webcamName = "";
-        public int requestedWidth = 1280, requestedHeight = 720;
+        public int requestedWidth = 1920, requestedHeight = 1080;
+        [Tooltip("Webcam only: follow the picture between reads, so the marks stay on the pins while the camera moves. Off = marks stay where they were read on the screen.")]
+        public bool webcamTracking = true;
+        [Tooltip("Webcam only: the long side of the small grey image the tracker works on (pixels). Larger follows finer detail and costs more time per frame.")]
+        [Range(160, 480)] public int webcamTrackingSize = 320;
 
         [Header("AR camera (on the phone)")]
         [Tooltip("On the phone, use the AR camera (ARCore through AR Foundation): marks stay on the pins while the phone moves. Off = the webcam fallback, as in the Editor.")]
@@ -61,14 +69,37 @@ namespace InstallerAssistant.AR
         public float arControllerPinSpacingMm = 5.0f;
         [Tooltip("Distance between neighbouring terminals at the device end (mm). 5.8 for the AXIS A4020-E reader (measured against the QR labels).")]
         public float arDevicePinSpacingMm = 5.8f;
+        [Tooltip("Cast each mark's ray from the CPU image's own intrinsics (the image the reader saw), taking only the quarter-turn from the display transform. Off = the display transform alone, which assumes the CPU image and the screen texture share one field of view.")]
+        public bool arIntrinsicsRays = true;
+        [Tooltip("Fuse every read of the same end: each pin is triangulated from all the views it was read in, with the pin-spacing depth as a weak prior. Off = each read replaces the marks (the 2 Nov behaviour).")]
+        public bool arFuseReads = true;
+        [Tooltip("Hold the marks with an ARCore anchor, so ARCore's map corrections move them with the board.")]
+        public bool arHoldWithArAnchor = true;
+        [Tooltip("Write AR records (one JSON line per read, 1 Hz mark positions, screenshots on a three-finger tap) to persistentDataPath/ar-records. Geometry only, no camera images.")]
+        public bool arRecords = true;
 
         ArRig ar;
 
         WebCamTexture cam;
+        int reportedCameraWidth, reportedCameraHeight;
         RectTransform root, imageRT, markers;
         RawImage image;
         TextMeshProUGUI notice;
-        readonly Dictionary<string, Vector2> anchors = new Dictionary<string, Vector2>();   // in raw image coordinates
+        sealed class Mark2D
+        {
+            public Vector2 At;             // in raw image coordinates (normalised, top-left), as of the latest camera image
+            public Vector2 Glide;          // what is left of the step a re-read made: shown as At + Glide, fading out
+            public bool Lost;              // the picture could not be followed since this was set: hidden until set again
+        }
+        struct TrackState { public double[] Motion; public int Epoch; }
+
+        readonly Dictionary<string, Mark2D> anchors = new Dictionary<string, Mark2D>();
+        readonly PlaneTracker tracker = new PlaneTracker();
+        readonly Dictionary<long, TrackState> frameStates = new Dictionary<long, TrackState>();   // per frame handed out
+        readonly Queue<long> frameOrder = new Queue<long>();
+        byte[] trackGray;
+        int trackW, trackH;
+        bool tracking;                     // the tracker has seen the current camera image
         long frameId;
         Color32[] buffer;
         int rotation;
@@ -113,6 +144,12 @@ namespace InstallerAssistant.AR
                 }
                 f.Width = w; f.Height = h; f.Format = FramePixels.Rgba32; f.Pixels = bytes;
                 f.Source = "webcam:" + cam.deviceName;
+                if (tracking)                              // where the picture was when this frame was handed out
+                {
+                    frameStates[f.Id] = new TrackState { Motion = (double[])tracker.Cumulative.Clone(), Epoch = tracker.Epoch };
+                    frameOrder.Enqueue(f.Id);
+                    while (frameOrder.Count > 60) frameStates.Remove(frameOrder.Dequeue());
+                }
                 return f;
             }
         }
@@ -153,6 +190,7 @@ namespace InstallerAssistant.AR
         public void Detach()
         {
             if (cam != null && cam.isPlaying) cam.Stop();
+            tracking = false; tracker.Reset(); frameStates.Clear(); frameOrder.Clear();
             if (root != null) Destroy(root.gameObject);
             root = imageRT = markers = null;
             image = null; notice = null;
@@ -160,10 +198,29 @@ namespace InstallerAssistant.AR
 
         public void ShowEnd(CableEnd end) { anchors.Clear(); if (ar != null) ar.Clear(); }
 
+        /// <summary>For checks in the Editor: the tracker's state (points followed, points that agree).</summary>
+        public string TrackingState { get { return tracking ? tracker.Inliers + "/" + tracker.Tracked + " epoch " + tracker.Epoch : "off"; } }
+
         public void Anchor(string key, ImagePoint where, CameraFrame frame)
         {
             if (ar != null) { ar.Anchor(key, where, frame); return; }
-            if (where.Valid) anchors[key] = new Vector2(where.X, where.Y);
+            if (!where.Valid) return;
+            var at = new Vector2(where.X, where.Y);
+            // the frame was read a moment ago and the camera has moved since: carry the point to the picture of now
+            TrackState then;
+            if (tracking && frame != null && frameStates.TryGetValue(frame.Id, out then))
+            {
+                double[] back;
+                if (then.Epoch != tracker.Epoch || !PlaneTracker.Invert(then.Motion, out back)) return;   // not followed since: no place to show
+                double x, y;
+                PlaneTracker.Apply(PlaneTracker.Compose(tracker.Cumulative, back), at.x * trackW, at.y * trackH, out x, out y);
+                at = new Vector2((float)x / trackW, (float)y / trackH);
+            }
+            Mark2D old;
+            var mark = new Mark2D { At = at };
+            // a re-read moves a mark by the reader's own scatter: glide there instead of jumping
+            if (anchors.TryGetValue(key, out old) && !old.Lost && (old.At + old.Glide - at).magnitude < 0.08f) mark.Glide = old.At + old.Glide - at;
+            anchors[key] = mark;
         }
 
         public void ClearAnchors() { anchors.Clear(); if (ar != null) ar.Clear(); }
@@ -172,9 +229,9 @@ namespace InstallerAssistant.AR
         {
             if (ar != null) return ar.TryGetPosition(key, out position);
             position = Vector2.zero;
-            Vector2 raw;
-            if (!anchors.TryGetValue(key, out raw) || image == null ||
-                !CameraImageGeometry.TryWebcamViewport(raw, image.uvRect, imageRT, markers, out position)) return false;
+            Mark2D mark;
+            if (!anchors.TryGetValue(key, out mark) || mark.Lost || image == null ||
+                !CameraImageGeometry.TryWebcamViewport(mark.At + mark.Glide, image.uvRect, imageRT, markers, out position)) return false;
             return position.x >= 0 && position.x <= 1 && position.y >= 0 && position.y <= 1;
         }
 
@@ -205,6 +262,14 @@ namespace InstallerAssistant.AR
             }
             if (cam == null) { StartCamera(); return; }
             if (!Ready) { if (notice != null) notice.text = "Starting the camera…"; return; }
+            if (cam.width != reportedCameraWidth || cam.height != reportedCameraHeight)
+            {
+                reportedCameraWidth = cam.width; reportedCameraHeight = cam.height;
+                string size = $"[ArCameraView] {cam.deviceName}: requested {requestedWidth}x{requestedHeight}, received {cam.width}x{cam.height}.";
+                if (cam.width != requestedWidth || cam.height != requestedHeight)
+                    Debug.LogWarning(size + " Check the camera application's output resolution and the active ArCameraView settings.");
+                else Debug.Log(size);
+            }
             if (notice != null) notice.text = "";
             image.enabled = true;
             image.texture = cam;
@@ -219,6 +284,73 @@ namespace InstallerAssistant.AR
             imageRT.sizeDelta = swap ? new Vector2(h, w) : new Vector2(w, h);
             imageRT.localEulerAngles = new Vector3(0, 0, -rotation);
             image.uvRect = cam.videoVerticallyMirrored ? new UnityEngine.Rect(0, 1, 1, -1) : new UnityEngine.Rect(0, 0, 1, 1);
+            Track();
+        }
+
+        // ================================================================== following the picture (webcam)
+
+        /// <summary>Feeds the tracker the new camera image and moves every anchor with the picture.</summary>
+        void Track()
+        {
+            if (!webcamTracking) { tracking = false; return; }
+            if (!cam.didUpdateThisFrame && tracking) { Fade(); return; }
+            if (!Shrink()) return;
+            if (anchors.Count > 0)                           // look for corners around the marks: the board, not the table
+            {
+                float x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+                foreach (var m in anchors.Values) { x0 = Mathf.Min(x0, m.At.x); x1 = Mathf.Max(x1, m.At.x); y0 = Mathf.Min(y0, m.At.y); y1 = Mathf.Max(y1, m.At.y); }
+                float mx = Mathf.Max(0.25f, 1.2f * (x1 - x0)), my = Mathf.Max(0.25f, 1.2f * (y1 - y0));
+                tracker.Focus(x0 - mx, y0 - my, x1 + mx, y1 + my);
+            }
+            else tracker.Focus(0, 0, 1, 1);
+            bool followed = tracker.Step(trackGray, trackW, trackH);
+            tracking = true;
+            if (!followed)
+            {
+                foreach (var m in anchors.Values) m.Lost = true;   // hidden until the next read sets them again
+                return;
+            }
+            var step = tracker.Last;
+            foreach (var m in anchors.Values)
+            {
+                if (m.Lost) continue;
+                double x, y;
+                PlaneTracker.Apply(step, m.At.x * trackW, m.At.y * trackH, out x, out y);
+                m.At = new Vector2((float)x / trackW, (float)y / trackH);
+            }
+            Fade();
+        }
+
+        void Fade()
+        {
+            float keep = Mathf.Exp(-Time.unscaledDeltaTime / 0.12f);
+            foreach (var m in anchors.Values) m.Glide *= keep;
+        }
+
+        /// <summary>The camera image as a small grey picture, row 0 at the top (as image points count), each pixel
+        /// the mean of a few samples of its block.</summary>
+        bool Shrink()
+        {
+            int w = cam.width, h = cam.height;
+            if (buffer == null || buffer.Length != w * h) buffer = new Color32[w * h];
+            cam.GetPixels32(buffer);
+            int f = Mathf.Max(1, Mathf.CeilToInt(Mathf.Max(w, h) / (float)webcamTrackingSize));
+            int tw = w / f, th = h / f;
+            if (tw < 48 || th < 48) return false;
+            if (trackGray == null || trackW != tw || trackH != th) { trackGray = new byte[tw * th]; trackW = tw; trackH = th; tracker.Reset(); }
+            int half = f / 2;
+            for (int y = 0; y < th; y++)
+            {
+                int row = (h - 1 - y * f) * w, row2 = (h - 1 - y * f - half) * w;   // the camera's rows are bottom-up
+                for (int x = 0; x < tw; x++)
+                {
+                    int c = x * f;
+                    Color32 a = buffer[row + c], b = buffer[row + c + half], d = buffer[row2 + c], e = buffer[row2 + c + half];
+                    // green counts twice, red and blue once: close to luminance, in integers
+                    trackGray[y * tw + x] = (byte)((2 * (a.g + b.g + d.g + e.g) + a.r + b.r + d.r + e.r + a.b + b.b + d.b + e.b) >> 4);
+                }
+            }
+            return true;
         }
 
         // ================================================================== webcam
@@ -257,6 +389,7 @@ namespace InstallerAssistant.AR
 
         void OnDestroy()
         {
+            if (ar != null) ar.Dispose();
             if (cam != null) { cam.Stop(); Destroy(cam); }
         }
     }
