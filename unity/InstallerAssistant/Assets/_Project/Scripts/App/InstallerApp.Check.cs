@@ -51,7 +51,7 @@ namespace InstallerAssistant.App
         // zone check: is the cable in the module its label names? bundle check: do the wires belong to the label?
         ZoneResult zone;
         BundleResult bundle;
-        bool zoneDismissed, zoneShown, pendingFirstCheck, bundleDismissed;
+        bool zoneDismissed, zoneShown, pendingFirstCheck, bundleDismissed, readFailed;
         RectTransform zoneFrom, zoneTo;
         Coroutine aiProgress;
 
@@ -79,6 +79,7 @@ namespace InstallerAssistant.App
             cable = null; current = null; record = null; ctrlRecord = null;
             check = null; results = null;
             readColours = null; readConfidence = null; readEdited = null;
+            readFailed = false;
             zone = null; zoneDismissed = false; zoneShown = false; pendingFirstCheck = false;
             bundle = null; bundleDismissed = false;
         }
@@ -485,9 +486,13 @@ namespace InstallerAssistant.App
 
         IEnumerator ReadWires(Image bar)
         {
+            readFailed = false;
             var end = atController ? CableEnd.Controller : CableEnd.Device;
-            if (!atController) view.ClearAnchors(); // a failed retry must not keep the previous reader's slot positions
-            foreach (var m in marks) if (m.State != Mark.Edited) m.Set(atController ? Mark.Hidden : Mark.Reading, m.Colour, null);
+            if (readColours == null || IsWizardOfOz)
+            {
+                if (!atController) view.ClearAnchors();
+                foreach (var m in marks) if (m.State != Mark.Edited) m.Set(atController ? Mark.Hidden : Mark.Reading, m.Colour, null);
+            }
             int[] colours = null; float[] conf = null; ImagePoint[] where = null;
             ControllerReading crd = null;
             DeviceEndReading drd = null;
@@ -507,6 +512,7 @@ namespace InstallerAssistant.App
                 if (attempt < 2) Instruction("Hold the phone still, 30 to 45 cm from the " + (atController ? "block" : "terminals"), Warn);
             }
             scanLine.gameObject.SetActive(false);
+            if (!HasReading(conf)) { readFailed = true; yield break; }
 
             int n = marks.Count;
             if (readColours == null || readColours.Length != n)
@@ -540,6 +546,8 @@ namespace InstallerAssistant.App
             return false;
         }
 
+        static bool HasReading(float[] confidence) { return confidence != null && Array.Exists(confidence, c => c > 0f); }
+
         /// <summary>A frame of a live camera (pixels the app can measure), not a photo of the Wizard of Oz or a test frame.</summary>
         static bool LiveFrame(CameraFrame frame)
         {
@@ -553,8 +561,17 @@ namespace InstallerAssistant.App
         /// </summary>
         IEnumerator SharpFrame(Action<CameraFrame> got)
         {
+            double started = Time.unscaledTimeAsDouble;
             var best = view.Latest;
-            if (!LiveFrame(best) || burstFrames <= 1) { got(best); yield break; }
+            if (IsWizardOfOz) { got(best); yield break; }
+            // Latest starts an asynchronous conversion; wait for fresh pixels before selecting the burst.
+            while (!LiveFrame(best) || best.Timestamp < started)
+            {
+                if (Time.unscaledTimeAsDouble - started >= 2.5) { got(null); yield break; }
+                yield return null;
+                best = view.Latest;
+            }
+            if (burstFrames <= 1) { got(best); yield break; }
             double sharpest = FrameQuality.Sharpness(best);
             float gap = Mathf.Max(0.02f, burstSeconds / Mathf.Max(1, burstFrames - 1));
             for (int i = 1; i < burstFrames; i++)
@@ -711,6 +728,7 @@ namespace InstallerAssistant.App
 
         void WiresSheet(string saveLabel)
         {
+            if (readFailed) { ReadFailureSheet("rescan"); return; }
             var shown = Shown();
             var unsure = shown.FindAll(x => x.State == Mark.Check);
             string here = EndWord(atController ? CableEnd.Controller : CableEnd.Device);
@@ -743,6 +761,13 @@ namespace InstallerAssistant.App
             Btn(sheetButtons, "Read again", ButtonKind.Secondary, () => clicked = "rescan");
             Btn(sheetButtons, saveLabel, ButtonKind.Primary, () => clicked = "save");
             Instruction(unsure.Count > 0 ? "Tap the amber wire" : "Looks good: save to continue", unsure.Count > 0 ? Warn : Ok);
+        }
+
+        void ReadFailureSheet(string retry)
+        {
+            Sheet("Could not read this time", "Hold the phone still with the terminals in view, then try again. Any markers shown are from the previous reading. Saved readings have not changed.");
+            Btn(sheetButtons, "Read again", ButtonKind.Primary, () => clicked = retry);
+            Instruction("Reading not updated", Warn);
         }
 
         // ================================================================== walk to the other end
@@ -909,7 +934,7 @@ namespace InstallerAssistant.App
                 if (clicked == "recheck")
                 {
                     if (op != null) op.Rewired(record);   // Wizard of Oz: the bench now shows the fixed wiring
-                    view.ShowEnd(CableEnd.Controller);
+                    if (IsWizardOfOz) view.ShowEnd(CableEnd.Controller);
                     log.Add("recheck");
                     yield return RunCheck(false);
                     continue;
@@ -920,6 +945,7 @@ namespace InstallerAssistant.App
 
         IEnumerator RunCheck(bool first)
         {
+            readFailed = false;
             foreach (var a in arrows) a.Destroy();
             arrows.Clear();
             HighlightSnapshot(-1);
@@ -929,7 +955,8 @@ namespace InstallerAssistant.App
             var rulesBar = ProgressLine("Comparing with the " + DeviceWord + " end");
             var aiBar = useSecondOpinion ? ProgressLine("AI second opinion") : null;
             Instruction("Hold steady", Accent);
-            foreach (var m in marks) m.Set(record.ExpectedOnPin(m.Id) != WireColours.None ? Mark.Reading : Mark.Hidden, -1, null);
+            if (first || results == null || IsWizardOfOz)
+                foreach (var m in marks) m.Set(record.ExpectedOnPin(m.Id) != WireColours.None ? Mark.Reading : Mark.Hidden, -1, null);
 
             ControllerReading rd = null;
             Opinion[] ops = null;
@@ -945,6 +972,12 @@ namespace InstallerAssistant.App
             }
             yield return ProgressUntil(readBar, () => rd != null, 2.2f);
             scanLine.gameObject.SetActive(false);
+            if (!HasReading(rd.Confidence))
+            {
+                if (aiProgress != null) StopCoroutine(aiProgress);
+                readFailed = true;
+                yield break;
+            }
 
             // the zone check first: is the cable in the module its label names? If not, pins mean nothing yet
             zone = ZoneCheck.Check(rule, rd, record, ClaimedByOthers());
@@ -1083,6 +1116,7 @@ namespace InstallerAssistant.App
 
         void ControllerResultsSheet()
         {
+            if (readFailed) { ReadFailureSheet("recheck"); return; }
             if (ZoneOpen()) { ZoneSheet(true); return; }
             if (BundleOpen()) { BundleSheet(true); return; }
             int wrong = Count(Verdict.Wrong), amber = Count(Verdict.Check);
@@ -1190,7 +1224,7 @@ namespace InstallerAssistant.App
                 {
                     bool rewired = clicked == "recheck_here";
                     if (rewired && op != null) op.RewiredAtDevice(); // a plain retry must not fix the Wizard-of-Oz bench
-                    view.ShowEnd(CableEnd.Device);
+                    if (IsWizardOfOz) view.ShowEnd(CableEnd.Device);
                     log.Add(rewired ? "recheck_at_reader" : "reread_at_reader");
                     yield return RecheckReader(rewired);
                     continue;
@@ -1205,8 +1239,7 @@ namespace InstallerAssistant.App
             foreach (var a in arrows) a.Destroy();
             arrows.Clear();
             HighlightSnapshot(-1);
-            readColours = null; readConfidence = null; readEdited = null;   // a new reading of re-wired terminals
-            foreach (var m in marks) m.Set(Mark.Hidden, -1, null);
+            Array.Clear(readEdited, 0, readEdited.Length); // successful rereads replace previous manual edits
             yield return ConfirmWires("Check again");
             record = new CableRecord(cable.AtEnd(CableEnd.Device), rule, (int[])readColours.Clone(), (bool[])readEdited.Clone(), DateTime.Now);
             records.Save(record);
@@ -1587,7 +1620,7 @@ namespace InstallerAssistant.App
             Clear(sheetContent);
             Clear(sheetButtons);
             if (first) StartCoroutine(SlideUp(sheet, sheetGroup, 160, 0.3f));
-            else StartCoroutine(Fade(sheetGroup, 0.3f, 1f, 0.2f));
+            else sheetGroup.alpha = 1f;
         }
 
         Image ProgressLine(string label, bool indeterminate = false)

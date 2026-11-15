@@ -143,7 +143,7 @@ namespace InstallerAssistant.App.Editor
             // A retry fails completely, then succeeds with a different wiring. Both paths must remain recoverable.
             reader.Next.Enqueue(new DeviceEndReading(new[] { -1,-1,-1,-1 }, new float[4]));
             Press("Read again");
-            yield return WaitTitle("No wires found");
+            yield return WaitTitle("Could not read this time");
             Assert(Button("Read again") != null, "failed retry keeps its retry button");
             Assert(Button("Check again") == null, "failed retry cannot save a reading");
             Assert(view.Anchors.Count == 0, "failed retry clears stale reader anchors");
@@ -268,7 +268,69 @@ namespace InstallerAssistant.App.Editor
             Assert(string.Join(",", originalColours) == string.Join(",", (int[])Get("readColours")),
                 "overlay recovery does not change confirmed wire colours");
             app.StopAllCoroutines();
+            yield return CheckRescan();
             yield return CheckEncoding();
+        }
+
+        IEnumerator CheckRescan()
+        {
+            app.burstFrames = 1;
+            view.ReadyAt = Time.unscaledTime + .2f;
+            CameraFrame fresh = null;
+            yield return (IEnumerator)Call("SharpFrame", new Action<CameraFrame>(f => fresh = f));
+            Assert(fresh != null && fresh.Pixels != null && fresh.Timestamp >= view.ReadyAt,
+                "rescan waits for fresh asynchronous pixels before reading");
+            view.Unavailable = true;
+            yield return (IEnumerator)Call("SharpFrame", new Action<CameraFrame>(f => fresh = f));
+            Assert(fresh == null, "unavailable camera times out without an empty-terminal reading");
+            view.Unavailable = false;
+
+            Set("atController", true); Set("useSecondOpinion", false);
+            Call("BuildMarks", CableEnd.Controller);
+            Call("SetTitle", "Controller end", "Door 1 reader · end 2 of 2");
+            var rule = AxisCatalog.OsdpReaderOnReader1;
+            var confidence = new[] {.99f,.99f,.99f,.99f,.99f,.99f,.99f,.99f};
+            var saved = new ControllerRecord(label.AtEnd(CableEnd.Controller), rule,
+                new[] {1,0,3,2,-1,-1,-1,-1}, confidence, new bool[8], DateTime.Now);
+            var device = new CableRecord(label, rule, new[] {0,1,2,3}, new bool[4], DateTime.Now);
+            Set("record", device); Set("ctrlRecord", saved); Set("readFailed", false);
+            var store = (IRecordStore)Get("records"); store.Save(saved);
+            var check = RuleChecker.Check(device, saved.AsReading()); Set("check", check);
+            var verdicts = VerdictCombiner.Evaluate(check, saved.AsReading(), new Opinion[8], 1f);
+            Set("results", verdicts);
+            var previous = new ImagePoint[8]; var next = new ImagePoint[8];
+            for (int i = 0; i < 8; i++) { previous[i] = new ImagePoint(.4f,.3f+i*.04f); next[i] = new ImagePoint(.6f,.3f+i*.04f); }
+            Call("AnchorMarks", CableEnd.Controller, previous, view.Latest);
+            foreach (var result in verdicts) Call("ApplyResult", result);
+
+            reader.ControllerNext.Enqueue(new ControllerReading(new[] {-1,-1,-1,-1,-1,-1,-1,-1}, new float[8]));
+            view.ReadyAt = Time.unscaledTime + .2f;
+            app.StartCoroutine((IEnumerator)Call("ControllerResultsLoop"));
+            yield return WaitButton("Check again"); Press("Check again"); yield return null;
+            Assert(view.Anchors.Count == 8 && view.Anchors["pin:1"].x == .4f, "pending rescan retains the last successful pin positions");
+            Assert(((CanvasGroup)Get("sheetGroup")).alpha == 1f, "rescan does not fade an already-open sheet");
+            yield return WaitTitle("Could not read this time");
+            ControllerRecord after;
+            Assert(store.TryGet(label.Key, out after) && ReferenceEquals(after,saved) && ReferenceEquals(Get("ctrlRecord"),saved),
+                "failed rescan preserves the saved and in-session controller readings");
+            Assert(!Array.Exists(((RectTransform)Get("sheetContent")).GetComponentsInChildren<TMP_Text>(), t => t.text == "No wire"),
+                "read failure never renders actual empty-terminal verdict rows");
+            Assert(view.Anchors.Count == 8, "failed rescan keeps the previous markers");
+            yield return new WaitForSecondsRealtime(.35f); Capture("controller-read-failed.png");
+
+            reader.ControllerNext.Enqueue(new ControllerReading(new[] {1,0,2,3,-1,-1,-1,-1}, confidence, next));
+            view.ReadyAt = Time.unscaledTime + .2f;
+            Press("Read again"); yield return null;
+            Assert(view.Anchors["pin:1"].x == .4f, "retry retains previous positions until success");
+            yield return WaitTitle("All 4 wires correct");
+            Assert(store.TryGet(label.Key,out after) && after.PinColours[2] == 2 && view.Anchors["pin:1"].x == .6f,
+                "successful retry replaces positions and saves the fresh colours");
+            yield return new WaitForSecondsRealtime(.35f); Capture("controller-read-recovered.png");
+            app.StopAllCoroutines();
+            reader.ControllerNext.Enqueue(new ControllerReading(new[] {-1,-1,-1,-1,-1,-1,-1,-1}, confidence, next));
+            yield return (IEnumerator)Call("RunCheck", false);
+            Assert(!(bool)Get("readFailed") && store.TryGet(label.Key,out after) && Array.TrueForAll(after.PinColours,c=>c == -1),
+                "a successful genuinely empty reading remains a valid reading");
         }
 
         IEnumerator CheckEncoding()
@@ -339,8 +401,10 @@ namespace InstallerAssistant.App.Editor
         sealed class Reader : IWireReader
         {
             public int Count; public readonly Queue<DeviceEndReading> Next = new Queue<DeviceEndReading>();
+            public readonly Queue<ControllerReading> ControllerNext = new Queue<ControllerReading>();
             public IEnumerator ReadDeviceEnd(UsageRule r, CableLabel c, CameraFrame f, Action<DeviceEndReading> done) { Count++; yield return null; done(Next.Dequeue()); }
-            public IEnumerator ReadControllerEnd(UsageRule r, CableLabel c, CameraFrame f, Action<ControllerReading> done) { throw new Exception("Unexpected controller read"); }
+            public IEnumerator ReadControllerEnd(UsageRule r, CableLabel c, CameraFrame f, Action<ControllerReading> done)
+            { yield return new WaitForSecondsRealtime(.2f); done(ControllerNext.Dequeue()); }
         }
         sealed class UnknownOpinion : ISecondOpinion
         { public IEnumerator Compare(CableRecord r, CameraFrame d, CameraFrame c, Action<Opinion[]> done) { yield return null; var opinions = new Opinion[8]; for (int i = 0; i < opinions.Length; i++) opinions[i] = Opinion.Unknown; done(opinions); } }
@@ -348,8 +412,12 @@ namespace InstallerAssistant.App.Editor
         {
             public readonly Dictionary<string,Vector2> Anchors = new Dictionary<string,Vector2>(); long id;
             public bool Live;
+            public float ReadyAt;
+            public bool Unavailable;
             public bool SeeThrough => false; public Vector2 LabelHint => Vector2.one * .5f; public float MarkerScale => 1;
-            public CameraFrame Latest => Live ? new CameraFrame { Id = ++id, Format = FramePixels.Rgba32, Width = 1, Height = 1, Pixels = new byte[4] } : new CameraFrame { Id = ++id };
+            public CameraFrame Latest => Live && !Unavailable && Time.unscaledTime >= ReadyAt
+                ? new CameraFrame { Id = ++id, Timestamp = Time.unscaledTimeAsDouble, Format = FramePixels.Rgba32, Width = 1, Height = 1, Pixels = new byte[4] }
+                : new CameraFrame { Id = ++id };
             public RectTransform Attach(RectTransform p) { var r = UiKit.Rect("Test camera",p); UiKit.Stretch(r); return r; }
             public void Detach() { } public void Tick() { } public void ShowEnd(CableEnd e) { Anchors.Clear(); }
             public void ClearAnchors() { Anchors.Clear(); }
