@@ -111,5 +111,9 @@ def trace_items(image: np.ndarray, points: Sequence[Optional[Tuple[float, float]
     scanned = next((lb for lb in labels if lb.key == key), None)
     others = [lb for lb in labels if lb.key != key]
     h, w = image.shape[:2]
-    lab = srgb_to_lab(image.astype(np.float64)) if any(p is not None for p in points) else None
+    # Without the scanned label in the picture every trace is "unknown" (trace_wire's first line), and that is the
+    # usual case in a close-up of the terminals: do not convert the whole frame to CIELAB for it (0.3 s of a read).
+    if scanned is None or not any(p is not None for p in points):
+        return [UNKNOWN] * len(points)
+    lab = srgb_to_lab(image.astype(np.float64))
     return [UNKNOWN if p is None else trace_wire(lab, (p[0] * w, p[1] * h), scanned, others) for p in points]

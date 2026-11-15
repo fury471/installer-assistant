@@ -294,6 +294,23 @@ moderate hand motion over 5 s. To measure on real video.
 on this board with high confidence (15/16 and 14/16 frames); red is right in 15/16, yellow in 11/16, the empty pins in all. Live
 batches with known wirings (`ml/tools/live_patches.py`), then leave-one-batch-out retraining.
 
+## 3f. Latency (14 Nov, night)
+
+Measured from 1348 logged reads: the service was busy 66 % of the time, mostly on quiet re-reads that found
+nothing (device end 86 %). Design answer: detection only to start and to recover, tracking in between
+[wagner2010; klein2007]; re-reads back off 3-6-12 s when confirmed and 1-2-4-8 s when missing.
+
+| | Before | After |
+| --- | --- | --- |
+| Controller read, service (test machine) | 1.44 s | ~1.0 s |
+| Device read, service (test machine) | 2.9 s | ~2.5 s |
+| LightGlue input 480x640 -> 384x512: session-1 reader pins within half a pitch | 87.5 % | 95.8 % |
+| LightGlue time per reader photo (laptop VM) | 2.45 s | 1.80 s |
+| Webcam tracker per frame (outside Unity) | 5.9-7.9 ms, ~1.5 MB garbage | 2.4-3.6 ms, none |
+| Frame handed to a reader (pixel copy) | 7.9 ms | 3.7 ms |
+
+To fill in: Unity Profiler frame times in the Editor and on the phone; end-to-end tap-to-marks time per end.
+
 ## 4. Open (to fill in later)
 
 - [ ] Session 2: final numbers for all tables above (`eval_locate --session session2`, both ends).

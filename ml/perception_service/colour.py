@@ -29,10 +29,22 @@ def grey_world(rgb: np.ndarray) -> np.ndarray:
     return np.clip(img * gain, 0, 255)
 
 
+_STEPS = np.arange(256, dtype=np.float64) / 255.0
+_LINEAR = np.where(_STEPS <= 0.04045, _STEPS / 12.92, ((_STEPS + 0.055) / 1.055) ** 2.4)     # sRGB value -> linear light
+
+
 def srgb_to_lab(rgb: np.ndarray) -> np.ndarray:
     """sRGB 0..255 (..., 3) → CIELAB (D65), (..., 3)."""
-    c = np.asarray(rgb, dtype=np.float64) / 255.0
-    c = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    values = np.asarray(rgb)
+    whole = values.dtype.kind in "ui" or (values.size >= 4096 and values.min() >= 0 and values.max() <= 255
+                                           and np.array_equal(values, np.rint(values)))
+    if whole:
+        # camera pixels are whole numbers 0..255: the gamma curve (a power per value) is read from a table of its
+        # 256 results instead of being computed for every pixel. The same numbers, several times faster on a frame.
+        c = _LINEAR[values.astype(np.uint8)]
+    else:
+        c = np.asarray(values, dtype=np.float64) / 255.0
+        c = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
     m = np.array([[0.4124564, 0.3575761, 0.1804375],
                   [0.2126729, 0.7151522, 0.0721750],
                   [0.0193339, 0.1191920, 0.9503041]])

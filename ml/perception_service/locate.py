@@ -30,6 +30,7 @@ that agreed - "not found" against a good homography). Trying it costs nothing wh
 Nothing here knows the wiring: it only says where the pins are.
 """
 import json
+import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -42,7 +43,12 @@ from .colour import srgb_to_lab
 TEMPLATES = Path(__file__).resolve().parent / "templates"
 MODELS = Path(__file__).resolve().parents[1] / "models"          # ml/models, not in Git
 LIGHTGLUE_MODEL = MODELS / "disk_lightglue_pipeline.onnx"
-LIGHTGLUE_SIZE = (480, 640)    # width, height of the picture pair LightGlue sees (bigger: slower, not better here)
+# width, height of the picture pair LightGlue sees; multiples of 16 (the extractor halves the picture four times).
+# Measured 14 Nov on the 24 session-1 reader photos (1920 px) and 28 live reader frames, same machine:
+#   480 x 640: 22/24 found, 87.5 % of pins within half a pitch, 2.45 s per photo; live 7/28 found, 2.58 s
+#   384 x 512: 23/24 found, 95.8 %, 1.80 s; live 7/28 found (the same frames), 1.86 s
+#   336 x 448: 21/24, 86.5 %, 1.50 s        288 x 384: 20/24, 83.3 %, 1.22 s
+LIGHTGLUE_SIZE = (384, 512)
 
 WORK_SIDE = 1920        # frames are shrunk to this long side first (the phone sends about 1920 x 1080)
 RATIO = 0.75            # Lowe's ratio test
@@ -297,7 +303,14 @@ def _lightglue():
         import onnxruntime as ort                        # only needed for templates that use LightGlue
         if not LIGHTGLUE_MODEL.exists():
             raise FileNotFoundError(f"{LIGHTGLUE_MODEL} is missing: run  python ml/tools/get_models.py")
-        _lightglue_session = ort.InferenceSession(str(LIGHTGLUE_MODEL), providers=ort.get_available_providers())
+        options = ort.SessionOptions()
+        # ONNX Runtime uses every physical core by default. When Unity runs on the same computer (the laptop test)
+        # that takes the processor from the app for the length of each read; IA_ORT_THREADS leaves it some
+        # (ONNX Runtime documentation, "Thread management": intra_op_num_threads). Unset = the default.
+        threads = int(os.environ.get("IA_ORT_THREADS", "0") or 0)
+        if threads > 0:
+            options.intra_op_num_threads = threads
+        _lightglue_session = ort.InferenceSession(str(LIGHTGLUE_MODEL), sess_options=options, providers=ort.get_available_providers())
     return _lightglue_session
 
 

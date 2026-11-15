@@ -597,10 +597,20 @@ namespace InstallerAssistant.App
         /// follows the picture between reads and takes each read as the new truth (PlaneTracker). When the view has
         /// lost the marks (it hides them rather than guess), the next read is retried sooner. Colours, verdicts and the
         /// session log are not touched. Live cameras only: a photo does not move.
+        ///
+        /// A read is the expensive part (0.5 to 3 s of the service's processor, a full frame encoded and sent), the
+        /// view's own tracking is the cheap part, so reads are spaced out the way detection and tracking are split
+        /// in AR systems (Wagner et al., 2010; Klein and Murray, 2007): often right after a read, when the first
+        /// extra views improve the marks most, then half as often each time they are confirmed (3, 6, 12 s), and
+        /// while the marks are missing 1, 2, 4, 8 s, because a read that finds nothing is usually followed by another
+        /// (14 Nov evening: 86 % of 1002 device-end reads found nothing and the service was busy 66 % of the time).
+        /// A new explicit read starts the spacing again.
         /// </summary>
         IEnumerator KeepMarksAligned()
         {
             float last = Time.unscaledTime;
+            float knownWait = Mathf.Max(1f, alignEverySeconds), missingWait = 1f;
+            int spacedFor = anchorEpoch;
             while (true)
             {
                 yield return new WaitForSecondsRealtime(0.4f);
@@ -610,7 +620,8 @@ namespace InstallerAssistant.App
                 foreach (var m in marks)
                     if (m.State != Mark.Hidden) { wanted = true; if (!m.Known) missing = true; }
                 if (!wanted) continue;
-                if (Time.unscaledTime - last < (missing ? 1f : Mathf.Max(1f, alignEverySeconds))) continue;
+                if (spacedFor != anchorEpoch) { spacedFor = anchorEpoch; knownWait = Mathf.Max(1f, alignEverySeconds); missingWait = 1f; }
+                if (Time.unscaledTime - last < (missing ? missingWait : knownWait)) continue;
                 var end = marksEnd;
                 int epoch = anchorEpoch;
                 var frame = view.Latest;
@@ -627,8 +638,14 @@ namespace InstallerAssistant.App
                 if (!done) StopCoroutine(request); // no overlapping old requests after a stall or end change
                 if (!done || where == null || epoch != anchorEpoch || end != marksEnd || camRoot == null ||
                     !waitingForInstaller || modalOpen) continue;
+                bool any = false;
                 for (int i = 0; i < marks.Count && i < where.Length; i++)
-                    if (where[i].Valid) view.Anchor(CameraKeys.Of(end, i), where[i], frame);
+                    if (where[i].Valid) { view.Anchor(CameraKeys.Of(end, i), where[i], frame); any = true; }
+                // space the next read: further apart each time the marks are confirmed or nothing is found
+                if (any && !missing) knownWait = Mathf.Min(knownWait * 2f, Mathf.Max(alignEverySeconds, alignMaxSeconds));
+                else if (any) { missingWait = 1f; knownWait = Mathf.Max(1f, alignEverySeconds); }
+                else missingWait = Mathf.Min(missingWait * 2f, 8f);
+                last = Time.unscaledTime;                 // counted from the answer, so a slow read is not followed at once
             }
         }
 

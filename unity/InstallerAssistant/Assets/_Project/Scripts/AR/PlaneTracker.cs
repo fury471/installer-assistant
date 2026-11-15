@@ -25,8 +25,9 @@ namespace InstallerAssistant.AR
         public const int Levels = 3;
         const int Radius = 4;                 // 9 x 9 window
         const int Iterations = 10;
-        const int Cell = 12;                  // one corner per cell of this size
-        const int MaxPoints = 220;
+        const int Cell = 16;                  // one corner per cell of this size
+        const int MaxPoints = 110;            // enough for a 6-parameter fit with outliers; time grows with every point
+        const int DetectEvery = 8;            // steps between searches for new corners (unless nearly none are left)
         const int MinInliers = 12;
         const float MinInlierShare = 0.4f;
         const float InlierPx = 0.75f;
@@ -41,8 +42,17 @@ namespace InstallerAssistant.AR
         public int Inliers { get; private set; }
         public int Tracked { get; private set; }
 
-        float[][] prev;                        // pyramid of the previous image
+        // Two pyramids (grey and its two gradients per level) that swap roles each step, and the window buffers:
+        // allocated once, so a step creates no garbage for the collector to stop the frame for.
+        float[][] prev, next, prevDx, prevDy, nextDx, nextDy;
+        float[] scratch;
         int[] pw, ph;
+        bool started;
+        int sinceDetect;
+        readonly float[] win = new float[(2 * Radius + 1) * (2 * Radius + 1)], wix = new float[(2 * Radius + 1) * (2 * Radius + 1)],
+                         wiy = new float[(2 * Radius + 1) * (2 * Radius + 1)], other = new float[(2 * Radius + 1) * (2 * Radius + 1)];
+        readonly List<float> ax = new List<float>(MaxPoints), ay = new List<float>(MaxPoints), bx = new List<float>(MaxPoints), by = new List<float>(MaxPoints);
+        bool[] inlierBuffer = new bool[MaxPoints];
         readonly List<float> px = new List<float>(), py = new List<float>();
         float fx0, fy0, fx1 = 1, fy1 = 1;      // where corners are looked for (normalised), around the marks
         readonly Random random = new Random(1);
@@ -50,7 +60,7 @@ namespace InstallerAssistant.AR
 
         public void Reset()
         {
-            prev = null;
+            started = false;
             px.Clear(); py.Clear();
             Cumulative = Identity();
             Last = Identity();
@@ -69,20 +79,23 @@ namespace InstallerAssistant.AR
         /// (then Epoch has changed and Cumulative starts again from this image).</summary>
         public bool Step(byte[] gray, int width, int height)
         {
-            var pyramid = Pyramid(gray, width, height, out int[] w, out int[] h);
-            if (prev == null || pw[0] != width || ph[0] != height)
+            if (pw == null || pw[0] != width || ph[0] != height) { Allocate(width, height); started = false; }
+            Build(gray, next, nextDx, nextDy);
+            if (!started)
             {
-                Start(pyramid, w, h);
+                Start();
                 return true;
             }
-            if (px.Count < MaxPoints * 0.6f) Detect(prev[0], pw[0], ph[0]);
+            // new corners when few are left, but not at every step: looking for them costs as much as following them
+            sinceDetect++;
+            if (px.Count < 2 * MinInliers || (px.Count < MaxPoints * 0.6f && sinceDetect >= DetectEvery))
+                Detect(prev[0], prevDx[0], prevDy[0], pw[0], ph[0]);
 
             int n = px.Count;
-            var ax = new List<float>(n); var ay = new List<float>(n);
-            var bx = new List<float>(n); var by = new List<float>(n);
+            ax.Clear(); ay.Clear(); bx.Clear(); by.Clear();
             for (int i = 0; i < n; i++)
             {
-                if (Follow(prev, pw, ph, pyramid, px[i], py[i], out float qx, out float qy))
+                if (Follow(px[i], py[i], out float qx, out float qy))
                 {
                     ax.Add(px[i]); ay.Add(py[i]); bx.Add(qx); by.Add(qy);
                 }
@@ -93,29 +106,52 @@ namespace InstallerAssistant.AR
             if (!FitAffine(ax, ay, bx, by, out motion, out inlier) || !Plausible(motion))
             {
                 Inliers = 0;
-                Start(pyramid, w, h);
+                Start();
                 Epoch++;
                 return false;
             }
             px.Clear(); py.Clear();
             int kept = 0;
-            for (int i = 0; i < inlier.Length; i++)
+            for (int i = 0; i < ax.Count; i++)
                 if (inlier[i] && bx[i] >= Radius + 1 && by[i] >= Radius + 1 && bx[i] < width - Radius - 2 && by[i] < height - Radius - 2)
                 { px.Add(bx[i]); py.Add(by[i]); kept++; }
             Inliers = kept;
             Last = motion;
             Cumulative = Compose(motion, Cumulative);
-            prev = pyramid; pw = w; ph = h;
+            Swap();
             return true;
         }
 
-        void Start(float[][] pyramid, int[] w, int[] h)
+        void Allocate(int width, int height)
         {
-            prev = pyramid; pw = w; ph = h;
+            pw = new int[Levels]; ph = new int[Levels];
+            prev = new float[Levels][]; next = new float[Levels][];
+            prevDx = new float[Levels][]; prevDy = new float[Levels][]; nextDx = new float[Levels][]; nextDy = new float[Levels][];
+            for (int l = 0, w = width, h = height; l < Levels; l++, w /= 2, h /= 2)
+            {
+                pw[l] = w; ph[l] = h;
+                prev[l] = new float[w * h]; next[l] = new float[w * h];
+                prevDx[l] = new float[w * h]; prevDy[l] = new float[w * h]; nextDx[l] = new float[w * h]; nextDy[l] = new float[w * h];
+            }
+            scratch = new float[width * height];
+        }
+
+        void Swap()
+        {
+            var t = prev; prev = next; next = t;
+            t = prevDx; prevDx = nextDx; nextDx = t;
+            t = prevDy; prevDy = nextDy; nextDy = t;
+        }
+
+        /// <summary>The image just built becomes the first of a new epoch.</summary>
+        void Start()
+        {
+            Swap();
+            started = true;
             px.Clear(); py.Clear();
             Cumulative = Identity();
             Last = Identity();
-            Detect(prev[0], w[0], h[0]);
+            Detect(prev[0], prevDx[0], prevDy[0], pw[0], ph[0]);
         }
 
         // ------------------------------------------------------------------ affine maps
@@ -156,51 +192,41 @@ namespace InstallerAssistant.AR
 
         // ------------------------------------------------------------------ images
 
-        static float[][] Pyramid(byte[] gray, int width, int height, out int[] w, out int[] h)
+        /// <summary>Fills a pyramid from the grey image: each level smoothed (3 x 3 binomial, the tracker's gradients
+        /// need a smooth image), halved for the next, and its two gradient images (central differences), which the
+        /// tracker would otherwise recompute for every window.</summary>
+        void Build(byte[] gray, float[][] levels, float[][] dx, float[][] dy)
         {
-            var levels = new float[Levels][];
-            w = new int[Levels]; h = new int[Levels];
-            w[0] = width; h[0] = height;
-            var first = new float[width * height];
-            for (int i = 0; i < first.Length; i++) first[i] = gray[i];
-            levels[0] = Smooth(first, width, height);
+            int w = pw[0], h = ph[0];
+            var first = levels[0];
+            for (int y = 0; y < h; y++)                        // rows, then columns, through the scratch buffer
+                for (int x = 0, i = y * w; x < w; x++, i++)
+                    scratch[i] = 0.25f * gray[x > 0 ? i - 1 : i] + 0.5f * gray[i] + 0.25f * gray[x < w - 1 ? i + 1 : i];
+            for (int y = 0; y < h; y++)
+                for (int x = 0, i = y * w; x < w; x++, i++)
+                    first[i] = 0.25f * scratch[y > 0 ? i - w : i] + 0.5f * scratch[i] + 0.25f * scratch[y < h - 1 ? i + w : i];
             for (int l = 1; l < Levels; l++)
             {
-                int sw = w[l - 1], sh = h[l - 1], dw = sw / 2, dh = sh / 2;
-                w[l] = dw; h[l] = dh;
-                var src = levels[l - 1];
-                var dst = new float[dw * dh];
+                int sw = pw[l - 1], dw = pw[l], dh = ph[l];
+                var src = levels[l - 1]; var dst = levels[l];
                 for (int y = 0; y < dh; y++)
                     for (int x = 0; x < dw; x++)
                     {
                         int i = 2 * y * sw + 2 * x;
                         dst[y * dw + x] = 0.25f * (src[i] + src[i + 1] + src[i + sw] + src[i + sw + 1]);
                     }
-                levels[l] = dst;
             }
-            return levels;
-        }
-
-        /// <summary>A 3 x 3 binomial blur: the tracker's gradients need a smooth image.</summary>
-        static float[] Smooth(float[] a, int w, int h)
-        {
-            var t = new float[a.Length];
-            var o = new float[a.Length];
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                {
-                    int i = y * w + x;
-                    float l = a[x > 0 ? i - 1 : i], r = a[x < w - 1 ? i + 1 : i];
-                    t[i] = 0.25f * l + 0.5f * a[i] + 0.25f * r;
-                }
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                {
-                    int i = y * w + x;
-                    float u = t[y > 0 ? i - w : i], d = t[y < h - 1 ? i + w : i];
-                    o[i] = 0.25f * u + 0.5f * t[i] + 0.25f * d;
-                }
-            return o;
+            for (int l = 0; l < Levels; l++)
+            {
+                int lw = pw[l], lh = ph[l];
+                var img = levels[l]; var gx = dx[l]; var gy = dy[l];
+                for (int y = 0; y < lh; y++)
+                    for (int x = 0, i = y * lw; x < lw; x++, i++)
+                    {
+                        gx[i] = 0.5f * (img[x < lw - 1 ? i + 1 : i] - img[x > 0 ? i - 1 : i]);
+                        gy[i] = 0.5f * (img[y < lh - 1 ? i + lw : i] - img[y > 0 ? i - lw : i]);
+                    }
+            }
         }
 
         static float At(float[] img, int w, int h, float x, float y)
@@ -216,7 +242,7 @@ namespace InstallerAssistant.AR
         // ------------------------------------------------------------------ corners
 
         /// <summary>Adds the strongest corner of every grid cell that has none yet (inside the focus area).</summary>
-        void Detect(float[] img, int w, int h)
+        void Detect(float[] img, float[] dxImg, float[] dyImg, int w, int h)
         {
             int cols = w / Cell, rows = h / Cell;
             if (cols < 1 || rows < 1) return;
@@ -232,8 +258,9 @@ namespace InstallerAssistant.AR
             float strongest = 0;
             int x0 = Math.Max(margin, (int)(fx0 * w)), x1 = Math.Min(w - margin, (int)(fx1 * w));
             int y0 = Math.Max(margin, (int)(fy0 * h)), y1 = Math.Min(h - margin, (int)(fy1 * h));
-            for (int y = y0; y < y1; y++)
-                for (int x = x0; x < x1; x++)
+            sinceDetect = 0;
+            for (int y = y0; y < y1; y += 2)                     // every second pixel: corners are wider than that
+                for (int x = x0; x < x1; x += 2)
                 {
                     int cell = (y / Cell) * cols + x / Cell;
                     if (y / Cell >= rows || x / Cell >= cols || taken[cell]) continue;
@@ -242,7 +269,7 @@ namespace InstallerAssistant.AR
                         for (int dx = -2; dx <= 2; dx++)
                         {
                             int i = (y + dy) * w + x + dx;
-                            float ix = 0.5f * (img[i + 1] - img[i - 1]), iy = 0.5f * (img[i + w] - img[i - w]);
+                            float ix = dxImg[i], iy = dyImg[i];
                             gxx += ix * ix; gxy += ix * iy; gyy += iy * iy;
                         }
                     float half = 0.5f * (gxx + gyy);
@@ -257,40 +284,34 @@ namespace InstallerAssistant.AR
 
         // ------------------------------------------------------------------ Lucas-Kanade
 
-        bool Follow(float[][] a, int[] aw, int[] ah, float[][] b, float x, float y, out float qx, out float qy)
+        bool Follow(float x, float y, out float qx, out float qy)
         {
             float gx = 0, gy = 0;                                 // the guess, carried down the pyramid
             int side = 2 * Radius + 1;
-            var win = new float[side * side]; var ix = new float[side * side]; var iy = new float[side * side];
             qx = x; qy = y;
             for (int l = Levels - 1; l >= 0; l--)
             {
                 float s = 1f / (1 << l);
                 float cx = x * s, cy = y * s;
-                int w = aw[l], h = ah[l];
-                var A = a[l]; var B = b[l];
+                int w = pw[l], h = ph[l];
+                var A = prev[l]; var Ax = prevDx[l]; var Ay = prevDy[l]; var B = next[l];
                 double gxx = 0, gxy = 0, gyy = 0;
-                for (int dy = -Radius, k = 0; dy <= Radius; dy++)
-                    for (int dx = -Radius; dx <= Radius; dx++, k++)
-                    {
-                        float u = cx + dx, v = cy + dy;
-                        win[k] = At(A, w, h, u, v);
-                        ix[k] = 0.5f * (At(A, w, h, u + 1, v) - At(A, w, h, u - 1, v));
-                        iy[k] = 0.5f * (At(A, w, h, u, v + 1) - At(A, w, h, u, v - 1));
-                        gxx += ix[k] * ix[k]; gxy += ix[k] * iy[k]; gyy += iy[k] * iy[k];
-                    }
+                Window(A, w, h, cx, cy, win);
+                Window(Ax, w, h, cx, cy, wix);
+                Window(Ay, w, h, cx, cy, wiy);
+                for (int k = 0; k < win.Length; k++) { gxx += wix[k] * wix[k]; gxy += wix[k] * wiy[k]; gyy += wiy[k] * wiy[k]; }
                 double det = gxx * gyy - gxy * gxy;
                 if (det < 1e-3) { if (l == 0) return false; gx *= 2; gy *= 2; continue; }
                 float vx = 0, vy = 0;
                 for (int it = 0; it < Iterations; it++)
                 {
                     double bxs = 0, bys = 0;
-                    for (int dy = -Radius, k = 0; dy <= Radius; dy++)
-                        for (int dx = -Radius; dx <= Radius; dx++, k++)
-                        {
-                            float d = win[k] - At(B, w, h, cx + dx + gx + vx, cy + dy + gy + vy);
-                            bxs += d * ix[k]; bys += d * iy[k];
-                        }
+                    Window(B, w, h, cx + gx + vx, cy + gy + vy, other);
+                    for (int k = 0; k < win.Length; k++)
+                    {
+                        float d = win[k] - other[k];
+                        bxs += d * wix[k]; bys += d * wiy[k];
+                    }
                     float ex = (float)((gyy * bxs - gxy * bys) / det), ey = (float)((gxx * bys - gxy * bxs) / det);
                     vx += ex; vy += ey;
                     if (ex * ex + ey * ey < 0.0009f) break;
@@ -300,14 +321,35 @@ namespace InstallerAssistant.AR
                     qx = x + gx + vx; qy = y + gy + vy;
                     if (qx < 1 || qy < 1 || qx > w - 2 || qy > h - 2) return false;
                     double residual = 0;
-                    for (int dy = -Radius, k = 0; dy <= Radius; dy++)
-                        for (int dx = -Radius; dx <= Radius; dx++, k++)
-                            residual += Math.Abs(win[k] - At(B, w, h, qx + dx, qy + dy));
+                    Window(B, w, h, qx, qy, other);
+                    for (int k = 0; k < win.Length; k++) residual += Math.Abs(win[k] - other[k]);
                     return residual / (side * side) < MaxResidual;
                 }
                 gx = 2 * (gx + vx); gy = 2 * (gy + vy);
             }
             return false;
+        }
+
+        /// <summary>The window around (cx, cy), bilinearly sampled. All its samples share one sub-pixel offset, so
+        /// the four weights are computed once and the rows are read straight from the array; only a window that
+        /// touches the border goes the slow, clamped way.</summary>
+        static void Window(float[] img, int w, int h, float cx, float cy, float[] into)
+        {
+            int xi = (int)Math.Floor(cx), yi = (int)Math.Floor(cy);
+            if (xi - Radius < 0 || yi - Radius < 0 || xi + Radius + 1 >= w || yi + Radius + 1 >= h)
+            {
+                for (int dy = -Radius, k = 0; dy <= Radius; dy++)
+                    for (int dx = -Radius; dx <= Radius; dx++, k++) into[k] = At(img, w, h, cx + dx, cy + dy);
+                return;
+            }
+            float fx = cx - xi, fy = cy - yi;
+            float w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
+            for (int dy = -Radius, k = 0; dy <= Radius; dy++)
+            {
+                int i = (yi + dy) * w + xi - Radius;
+                for (int dx = 0; dx <= 2 * Radius; dx++, k++, i++)
+                    into[k] = w00 * img[i] + w10 * img[i + 1] + w01 * img[i + w] + w11 * img[i + w + 1];
+            }
         }
 
         // ------------------------------------------------------------------ robust affine fit
@@ -316,7 +358,8 @@ namespace InstallerAssistant.AR
         {
             int n = ax.Count;
             motion = Identity();
-            inlier = new bool[n];
+            if (inlierBuffer.Length < n) inlierBuffer = new bool[n];
+            inlier = inlierBuffer;
             if (n < MinInliers) return false;
             int bestCount = 0;
             double[] best = null;
@@ -332,7 +375,7 @@ namespace InstallerAssistant.AR
                     double ex = m[0] * ax[p] + m[1] * ay[p] + m[2] - bx[p], ey = m[3] * ax[p] + m[4] * ay[p] + m[5] - by[p];
                     if (ex * ex + ey * ey < InlierPx * InlierPx) count++;
                 }
-                if (count > bestCount) { bestCount = count; best = (double[])m.Clone(); }
+                if (count > bestCount) { bestCount = count; best = (double[])m.Clone(); if (count > 0.9 * n) break; }   // nearly all agree: no better sample to find
             }
             if (best == null || bestCount < MinInliers || bestCount < MinInlierShare * n) return false;
             // least squares on the inliers, twice (the second round with the refined model's inliers)

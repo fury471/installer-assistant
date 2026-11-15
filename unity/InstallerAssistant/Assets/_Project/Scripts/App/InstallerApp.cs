@@ -50,6 +50,8 @@ namespace InstallerAssistant.App
         public bool keepMarksAligned = true;
         [Tooltip("Seconds between those quiet re-reads.")]
         [Range(1f, 10f)] public float alignEverySeconds = 3f;
+        [Tooltip("The quiet re-reads start Align Every Seconds apart and double their spacing each time the marks are confirmed, up to this many seconds. Each read costs the service 0.5 to 3 s of processor time.")]
+        [Range(3f, 60f)] public float alignMaxSeconds = 12f;
         [Tooltip("Live cameras: a read uses the sharpest of this many frames taken over Burst Seconds (1 = the frame of the moment, as before).")]
         [Range(1, 8)] public int burstFrames = 5;
         [Range(0.1f, 1.5f)] public float burstSeconds = 0.5f;

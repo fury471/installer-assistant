@@ -224,6 +224,12 @@ class PinReader:
         self.path = path or MODEL
         bundle = joblib.load(self.path)
         self.presence, self.colour = bundle["presence"], bundle["colour"]
+        # The forests were trained with n_jobs=-1, and predict then spreads 400 trees over a thread pool on every
+        # call. For the handful of windows of one read that dispatch costs more than the trees themselves
+        # (measured: 140 ms -> 38 ms for both forests on 8 windows, identical probabilities), so predict in one thread.
+        for forest in (self.presence, self.colour):
+            if hasattr(forest, "n_jobs"):
+                forest.n_jobs = 1
         self.temperature = float(bundle["temperature"])
         self.answers = [NO_WIRE] + [int(c) for c in self.colour.classes_]
         self.info = bundle.get("info", {})

@@ -210,3 +210,9 @@ Only details that were checked are given; where a page range or DOI could not be
 
 [69] D. Padfield, "Masked object registration in the Fourier domain," *IEEE Transactions on Image Processing*, vol. 21, no. 5, pp. 2706–2718, 2012, doi: 10.1109/TIP.2011.2181402.
 <sub>key `padfield2012`</sub>
+
+[70] D. Wagner, G. Reitmayr, A. Mulloni, T. Drummond, and D. Schmalstieg, "Real-time detection and tracking for augmented reality on mobile phones," *IEEE Transactions on Visualization and Computer Graphics*, vol. 16, no. 3, pp. 355–368, 2010, doi: 10.1109/TVCG.2009.99.  
+<sub>key `wagner2010`</sub>
+
+[71] G. Klein and D. Murray, "Parallel tracking and mapping for small AR workspaces," in *Proc. IEEE and ACM Int. Symp. Mixed and Augmented Reality (ISMAR)*, 2007, pp. 225–234, doi: 10.1109/ISMAR.2007.4538852.  
+<sub>key `klein2007`</sub>

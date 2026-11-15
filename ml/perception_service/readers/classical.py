@@ -140,6 +140,8 @@ class ClassicalReader:
         return self._read_module_baseline(positions, image)
 
     def _read_module_baseline(self, positions, image: np.ndarray) -> List[ReadItem]:
+        if all(p is None for p in positions):                # nothing located: no need to white-balance the frame
+            return [ReadItem() for _ in positions]
         h, w = image.shape[:2]
         balanced = grey_world(image)
         items = []

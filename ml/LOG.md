@@ -522,3 +522,44 @@ No new Android APK was produced. Visual layout, Blueprint_Demo, real ARCore trac
 recognition accuracy still need the normal manual/device integration checks. Saved iVCam replay identified
 black-padded portrait input as a localization failure; configuring full-resolution, correctly oriented camera
 output is required. No automatic letterbox-cropping change is included here.
+
+## 2026-11-14 (night) · Lag and latency: measured first, then fixed where the time went
+
+**Measured** (1348 reads logged 18:08-21:19 in `data/live/2026-11-14-editor/index.csv`; profiles of the service
+code on those frames; the Unity loops timed outside the Editor, so the Editor's own numbers still need the
+Unity Profiler):
+- The service was inside a read **66 % of the wall time**. Device-end reads: median 1.8 s (2.5-3.5 s when the
+  reader is in view), 86 % of 1002 found nothing. Controller reads: median 1.1 s, 67 % of 346 found nothing.
+  The quiet re-reads came every 3 s (every 1 s while marks were missing), and on the laptop the service and
+  Unity share one processor.
+- Device read: 2.4 of 2.9 s is the LightGlue network. Controller read (1.44 s on the test machine): locate 0.49,
+  wire reader 0.40, zone survey 0.35, tracing 0.35 of which 0.31 was converting the whole frame to CIELAB for a
+  label that was not in the picture; both forests' predict 140 ms of thread dispatch for 8 windows.
+- Unity main thread per camera frame (webcam view): the tracker 5.9-7.9 ms and ~1.5 MB of new arrays per step;
+  every frame handed to a reader copied 2 million pixels one by one (7.9 ms) after a second 8 MB fetch from the
+  camera.
+
+**Changed** (no contract file; answers identical unless noted):
+- Re-reads spaced like detection and tracking in AR systems (Wagner et al. 2010; Klein & Murray 2007): 3, 6, 12 s
+  while the marks are confirmed (`alignMaxSeconds`), 1, 2, 4, 8 s while they are missing; a new explicit read
+  starts again. The view's tracking (webcam) or world anchors (ARCore) hold the marks in between.
+- LightGlue input 480 x 640 -> **384 x 512**: session-1 reader photos 22/24 -> 23/24 found, pins within half a
+  pitch 87.5 % -> 95.8 %, 2.45 -> 1.80 s per photo; 28 live reader frames: the same 7 found, 2.58 -> 1.86 s.
+  (336 x 448 and 288 x 384 are faster and worse; table in `locate.py`.) Positions change slightly; tuned on
+  session 1, session 2 untouched.
+- Forests predict in one thread (140 -> 38 ms, identical probabilities; scikit-learn "Computational performance").
+- Tracing converts the frame to CIELAB only when the scanned label is in the picture (-0.3 s per read otherwise);
+  `srgb_to_lab` reads the gamma curve from a 256-entry table for whole-number pixels (bit-identical, 0.33 -> 0.23 s
+  per frame); no white balance of the frame when nothing was located.
+  **Controller read 1.44 -> ~1.0 s, device read 2.9 -> ~2.5 s on the test machine (2 cores).**
+- `IA_ORT_THREADS` (optional): ONNX Runtime threads for LightGlue; by default it takes every core, which on the
+  laptop takes them from Unity during each device read (ONNX Runtime "Thread management").
+- `PlaneTracker`: buffers allocated once and swapped (no garbage per step; Unity "Garbage collection best
+  practices"), gradient images built once per level, windows sampled with shared bilinear weights, 110 points
+  instead of 220, new corners sought every 8 steps. **5.9-7.9 -> 2.4-3.6 ms per frame**, same error at slow and
+  moderate motion (0.01 / 0.03 pitch median), 0.13 -> 0.16 at fast motion; the Editor checks pass (0.21 px).
+- `ArCameraView`: one camera fetch per rendered frame shared by the tracker and a handed-out frame; the frame's
+  bytes by one block copy (7.9 -> 3.7 ms).
+
+**Not measured here:** frame time in the Editor and on the phone. Window > Analysis > Profiler, CPU module, sort by
+"Time ms" and by "GC Alloc": `ArCameraView.Tick`, `InstallerApp.Update`, `PerceptionClient` should be small now.
